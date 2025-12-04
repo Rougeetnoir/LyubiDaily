@@ -334,14 +334,14 @@ function App() {
               Edit Activities
             </Button>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex w-full flex-1">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+            <div className="flex w-full max-w-[380px] flex-col gap-3">
               <Select
                 value={selectedActivityId || undefined}
                 onValueChange={(value: string) => setSelectedActivityId(value)}
                 disabled={activities.length === 0}
               >
-                <SelectTrigger className="h-10 w-full min-w-0 rounded-lg border border-[#E0E0E0] bg-white text-sm text-[#333333] shadow-none focus:border-[#C5C5C5] focus:ring-0 focus:ring-offset-0 [&[data-placeholder]]:text-[#A0A0A0]">
+                <SelectTrigger className="h-10 w-full rounded-lg border border-[#E0E0E0] bg-white text-sm text-[#333333] shadow-none focus:border-[#C5C5C5] focus:ring-0 focus:ring-offset-0 [&[data-placeholder]]:text-[#A0A0A0]">
                   <SelectValue placeholder={activities.length ? 'Select activity' : 'Add an activity first'} />
                 </SelectTrigger>
                 <SelectContent>
@@ -355,8 +355,14 @@ function App() {
                   ))}
                 </SelectContent>
               </Select>
+              <Input
+                placeholder="Remark (optional)"
+                value={remark}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setRemark(event.target.value)}
+                className="h-10 w-full rounded-lg border border-[#E0E0E0] px-3 text-sm text-[#333333] placeholder:text-[#A0A0A0] focus:border-[#C5C5C5] focus:ring-0"
+              />
             </div>
-            <div className="flex flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-2 sm:ml-4 sm:w-auto sm:flex-row sm:items-center">
               <Button
                 onClick={isRunning ? handleStop : handleStart}
                 disabled={startButtonDisabled}
@@ -370,12 +376,6 @@ function App() {
               )}
             </div>
           </div>
-          <Input
-            placeholder="Remark (optional)"
-            value={remark}
-            onChange={(event: ChangeEvent<HTMLInputElement>) => setRemark(event.target.value)}
-            className="h-10 w-full rounded-lg border border-[#E0E0E0] px-3 text-sm text-[#333333] placeholder:text-[#A0A0A0] focus:border-[#C5C5C5] focus:ring-0"
-          />
           {runningRecord && (
             <p className="text-xs text-muted-foreground">
               计时中：
