@@ -1,4 +1,5 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from 'react'
+import { AnalogClock } from '@/components/AnalogClock'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -362,18 +363,21 @@ function App() {
                 className="h-10 w-full rounded-lg border border-[#E0E0E0] px-3 text-sm text-[#333333] placeholder:text-[#A0A0A0] focus:border-[#C5C5C5] focus:ring-0"
               />
             </div>
-            <div className="flex flex-col gap-2 sm:ml-4 sm:w-auto sm:flex-row sm:items-center">
-              <Button
-                onClick={isRunning ? handleStop : handleStart}
-                disabled={startButtonDisabled}
-                className={startButtonClassName}
-              >
-                <span className="mr-2 text-base">{isRunning ? '■' : '▶'}</span>
-                {isRunning ? 'Stop' : 'Start'}
-              </Button>
-              {isRunning && (
-                <span className="text-sm text-[#555555] sm:ml-3">{formatDurationHMS(runningDurationSeconds)}</span>
-              )}
+            <div className="flex flex-col gap-3 sm:ml-4 sm:w-auto sm:flex-row sm:items-center">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Button
+                  onClick={isRunning ? handleStop : handleStart}
+                  disabled={startButtonDisabled}
+                  className={startButtonClassName}
+                >
+                  <span className="mr-2 text-base">{isRunning ? '■' : '▶'}</span>
+                  {isRunning ? 'Stop' : 'Start'}
+                </Button>
+                {isRunning && (
+                  <span className="text-sm text-[#555555] sm:ml-3">{formatDurationHMS(runningDurationSeconds)}</span>
+                )}
+              </div>
+              <AnalogClock className="sm:ml-6" />
             </div>
           </div>
           {runningRecord && (
