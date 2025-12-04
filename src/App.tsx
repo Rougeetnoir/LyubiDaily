@@ -16,7 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import type { Activity, RecordItem, RunningRecord } from './types'
@@ -265,6 +264,14 @@ function App() {
   }, [todayRecords])
 
   const effectiveTodayTotal = todayTotalSeconds + runningDurationSeconds
+  const isRunning = Boolean(runningRecord)
+  const startButtonDisabled = !isRunning && !selectedActivityId
+  const startButtonClassName = cn(
+    'h-10 rounded-lg px-4 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+    isRunning
+      ? 'border border-[#FFDBD2] bg-[#FFECE8] text-[#D64545] hover:bg-[#FFE0D8] active:bg-[#FFD6CF]'
+      : 'border border-[#D0D0D0] bg-[#F0F0F0] text-[#333333] hover:bg-[#E8E8E8] active:bg-[#DDDDDD]'
+  )
 
   const handleCreateActivity = () => {
     const name = newActivityName.trim()
@@ -296,41 +303,45 @@ function App() {
   return (
     <div className="min-h-screen bg-muted/20 px-4 py-10">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
-        <header className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <header className="flex flex-col gap-4 border-b border-[#E5E5E5] py-6 md:flex-row md:items-center md:justify-between">
           <div className="space-y-2 text-left">
-            <p className="text-sm uppercase tracking-wide text-muted-foreground">Lyubi Daily</p>
-            <h1 className="text-3xl font-semibold tracking-tight">Daily time ledger</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="text-[28px] font-bold text-[#1F1F1F]">Daily time ledger</h1>
+            <p className="text-base text-[#888888]">
               A lightweight companion to keep Lyubischev-inspired records.
             </p>
           </div>
-          <div className="text-right text-sm text-muted-foreground">
-            <div className="font-medium text-foreground">Today · {todayLabel}</div>
-            <div className="text-xs">Total {formatDuration(effectiveTodayTotal)}</div>
+          <div className="flex flex-col items-start text-sm text-[#888888] md:items-end">
+            <p className="text-base font-medium text-[#1F1F1F]">Today · {todayLabel}</p>
+            <p className="text-sm">Total {formatDuration(effectiveTodayTotal)}</p>
           </div>
         </header>
 
-        <Card>
-          <CardContent className="flex flex-col gap-4 py-6 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-1 flex-wrap items-center gap-3">
-              <Button variant="outline" onClick={handleOpenCreateActivity} className="whitespace-nowrap">
-                + Add Activity
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={handleOpenActivityManager}
-                disabled={activities.length === 0}
-                className="whitespace-nowrap"
-              >
-                Edit Activities
-              </Button>
-              <Separator orientation="vertical" className="hidden h-10 sm:block" />
+        <section className="flex flex-col gap-3 rounded-[12px] border border-[#E5E5E5] bg-white p-5">
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="ghost"
+              onClick={handleOpenCreateActivity}
+              className="h-9 rounded-lg border border-[#E5E5E5] bg-[#F7F7F7] px-3 py-1.5 text-sm font-medium text-[#1F1F1F] hover:bg-[#F0F0F0]"
+            >
+              + Add Activity
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={handleOpenActivityManager}
+              disabled={activities.length === 0}
+              className="h-9 rounded-lg border border-[#E5E5E5] bg-[#F7F7F7] px-3 py-1.5 text-sm font-medium text-[#1F1F1F] hover:bg-[#F0F0F0] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Edit Activities
+            </Button>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="flex w-full flex-1">
               <Select
                 value={selectedActivityId || undefined}
                 onValueChange={(value: string) => setSelectedActivityId(value)}
                 disabled={activities.length === 0}
               >
-                <SelectTrigger className="min-w-[200px]">
+                <SelectTrigger className="h-10 w-full min-w-0 rounded-lg border border-[#E0E0E0] bg-white text-sm text-[#333333] shadow-none focus:border-[#C5C5C5] focus:ring-0 focus:ring-offset-0 [&[data-placeholder]]:text-[#A0A0A0]">
                   <SelectValue placeholder={activities.length ? 'Select activity' : 'Add an activity first'} />
                 </SelectTrigger>
                 <SelectContent>
@@ -344,32 +355,35 @@ function App() {
                   ))}
                 </SelectContent>
               </Select>
-              <Input
-                placeholder="Remark (optional)"
-                value={remark}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => setRemark(event.target.value)}
-                className="min-w-0 flex-1"
-              />
             </div>
-            <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center">
-              <Button onClick={handleStart} disabled={!selectedActivityId}>
-                ▶ Start
+            <div className="flex flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <Button
+                onClick={isRunning ? handleStop : handleStart}
+                disabled={startButtonDisabled}
+                className={startButtonClassName}
+              >
+                <span className="mr-2 text-base">{isRunning ? '■' : '▶'}</span>
+                {isRunning ? 'Stop' : 'Start'}
               </Button>
-              {runningRecord && (
-                <Button variant="secondary" onClick={handleStop}>
-                  Stop
-                </Button>
-              )}
-              {runningRecord && (
-                <p className="text-xs text-muted-foreground">
-                  计时中：
-                  {activities.find((a) => a.id === runningRecord.activityId)?.name ?? '未知活动'} ·{' '}
-                  {formatDurationHMS(runningDurationSeconds)}
-                </p>
+              {isRunning && (
+                <span className="text-sm text-[#555555] sm:ml-3">{formatDurationHMS(runningDurationSeconds)}</span>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+          <Input
+            placeholder="Remark (optional)"
+            value={remark}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => setRemark(event.target.value)}
+            className="h-10 w-full rounded-lg border border-[#E0E0E0] px-3 text-sm text-[#333333] placeholder:text-[#A0A0A0] focus:border-[#C5C5C5] focus:ring-0"
+          />
+          {runningRecord && (
+            <p className="text-xs text-muted-foreground">
+              计时中：
+              {activities.find((a) => a.id === runningRecord.activityId)?.name ?? '未知活动'} ·{' '}
+              {formatDurationHMS(runningDurationSeconds)}
+            </p>
+          )}
+        </section>
 
         {isAddingActivity && (
           <Card>

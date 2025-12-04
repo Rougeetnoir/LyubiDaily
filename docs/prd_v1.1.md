@@ -137,6 +137,52 @@ Small: 12px
     
 
 ---
+## **📘 PRD v1.1 — Start/Stop Unified Button Spec**
+
+### **1. Replace the Start and Stop buttons with a single stateful button.**
+
+### **2. The button must NOT change its physical position in the layout.**
+
+---
+
+## **Button States**
+
+### **State: Idle (no active timer)**
+
+```
+label: "Start"
+icon: ▶
+background: #F0F0F0
+border: 1px solid #D0D0D0
+text-color: #333
+hover: #E8E8E8
+active: #DDDDDD
+```
+
+---
+
+### **State: Running (timer active)**
+
+```
+label: "Stop"
+icon: ■
+background: #FFECE8
+border: 1px solid #FFDBD2
+text-color: #D64545
+hover: #FFE0D8
+active: #FFD6CF
+```
+
+---
+
+# 🎨 Optional Enhancement (PRD future step)
+
+**Display current elapsed time next to the Stop button**, like:
+
+```
+[ ■ Stop ]   00:12:45
+```
+
 
 # ✅ **Step 3 — Tabs UI 视觉加强**
 
