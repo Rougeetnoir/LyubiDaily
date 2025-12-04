@@ -61,8 +61,8 @@ export function TimeBarView({ entries, activities, className }: TimeBarViewProps
         const widthPct = ((endMinutes - startMinutes) / MINUTES_IN_DAY) * 100
         if (widthPct <= 0) return null
         const startPct = (startMinutes / MINUTES_IN_DAY) * 100
-        const baseColor = getAlphaColor(activity?.color, 0.12) ?? 'rgba(0,0,0,0.12)'
-        const hoverColor = getAlphaColor(activity?.color, 0.18) ?? 'rgba(0,0,0,0.18)'
+        const baseColor = getAlphaColor(activity?.color, 0.2) ?? 'rgba(0,0,0,0.2)'
+        const hoverColor = getAlphaColor(activity?.color, 0.26) ?? 'rgba(0,0,0,0.26)'
         const labelParts = [
           `${activity?.icon ? `${activity.icon} ` : ''}${activity?.name ?? '未知活动'}`,
           `${formatClock(entry.start)}–${formatClock(endTimestamp)} (${formatDuration(entry.duration)})`,
@@ -122,7 +122,7 @@ export function TimeBarView({ entries, activities, className }: TimeBarViewProps
         <div
           key={segment.id}
           title={segment.label}
-          className="absolute inset-y-0 cursor-pointer border-r border-[rgba(0,0,0,0.06)] transition"
+          className="absolute inset-y-0 cursor-pointer border-r border-[rgba(0,0,0,0.08)] transition"
           style={{
             left: `${segment.startPct}%`,
             width: `${segment.widthPct}%`,

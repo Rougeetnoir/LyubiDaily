@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Activity } from '@/types'
+import type { Activity, RecordItem } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 
-interface ManualEntryModalProps {
+interface EditEntryModalProps {
   open: boolean
+  entry: RecordItem | null
   activities: Activity[]
-  initialDate: Date
   onClose: () => void
-  onSave: (entry: { activityId: string; start: number; end: number; remark?: string }) => void
+  onSave: (payload: { id: string; activityId: string; start: number; end: number; remark?: string }) => void
 }
 
 const formatDateInput = (date: Date) => {
@@ -19,25 +19,28 @@ const formatDateInput = (date: Date) => {
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+const formatTimeInput = (date: Date) => date.toTimeString().slice(0, 5)
 
-export function ManualEntryModal({ open, activities, initialDate, onClose, onSave }: ManualEntryModalProps) {
+export function EditEntryModal({ open, entry, activities, onClose, onSave }: EditEntryModalProps) {
   const [activityId, setActivityId] = useState('')
-  const [date, setDate] = useState(formatDateInput(initialDate))
+  const [date, setDate] = useState(formatDateInput(new Date()))
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
   const [remark, setRemark] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (open) {
-      setActivityId('')
-      setDate(formatDateInput(initialDate))
-      setStartTime('')
-      setEndTime('')
-      setRemark('')
+    if (open && entry) {
+      const startDate = new Date(entry.start)
+      const endDate = new Date(entry.end ?? entry.start + entry.duration * 1000)
+      setActivityId(entry.activityId)
+      setDate(formatDateInput(startDate))
+      setStartTime(formatTimeInput(startDate))
+      setEndTime(formatTimeInput(endDate))
+      setRemark(entry.remark ?? '')
       setError(null)
     }
-  }, [open, initialDate])
+  }, [open, entry])
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -51,10 +54,12 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
     return () => window.removeEventListener('keydown', handleKey)
   }, [open, onClose])
 
-  const hasActivities = activities.length > 0
-  const activityOptions = useMemo(() => activities.map((a) => ({ id: a.id, label: `${a.icon ? `${a.icon} ` : ''}${a.name}` })), [activities])
+  const activityOptions = useMemo(
+    () => activities.map((a) => ({ id: a.id, label: `${a.icon ? `${a.icon} ` : ''}${a.name}` })),
+    [activities],
+  )
 
-  if (!open) return null
+  if (!open || !entry) return null
 
   const handleSubmit = () => {
     if (!activityId) {
@@ -77,6 +82,7 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
     }
     setError(null)
     onSave({
+      id: entry.id,
       activityId,
       start,
       end,
@@ -89,8 +95,8 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
       <div className="w-full max-w-lg rounded-2xl border border-[#E5E5E5] bg-white p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-[#1F1F1F]">Add manual entry</h2>
-            <p className="text-sm text-[#888888]">Record an activity retroactively.</p>
+            <h2 className="text-lg font-semibold text-[#1F1F1F]">Edit entry</h2>
+            <p className="text-sm text-[#888888]">Update this record&apos;s details.</p>
           </div>
           <Button variant="ghost" onClick={onClose} className="text-sm text-[#666666]">
             Close
@@ -99,9 +105,9 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
         <div className="space-y-4">
           <div className="space-y-2">
             <label className="text-sm font-medium text-[#333333]">Activity</label>
-            <Select value={activityId || undefined} onValueChange={(value) => setActivityId(value)} disabled={!hasActivities}>
+            <Select value={activityId || undefined} onValueChange={(value) => setActivityId(value)}>
               <SelectTrigger className="h-10 rounded-lg border border-[#E0E0E0]">
-                <SelectValue placeholder={hasActivities ? 'Select activity' : 'Please create an activity first'} />
+                <SelectValue placeholder="Select activity" />
               </SelectTrigger>
               <SelectContent>
                 {activityOptions.map((option) => (
@@ -114,7 +120,7 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-[#333333]">Date</label>
+              <label className="text-sm_FONT-medium text-[#333333]">Date</label>
               <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-lg border-[#E0E0E0]" />
             </div>
             <div className="space-y-2">
@@ -141,8 +147,8 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
           <Button variant="ghost" onClick={onClose} className="px-4 py-2 text-sm text-[#555555]">
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={!hasActivities} className="px-4 py-2 text-sm">
-            Save entry
+          <Button onClick={handleSubmit} className="px-4 py-2 text-sm">
+            Save changes
           </Button>
         </div>
       </div>

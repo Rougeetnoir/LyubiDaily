@@ -1,5 +1,6 @@
-import { type ChangeEvent, useEffect, useMemo, useState } from 'react'
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalogClock } from '@/components/AnalogClock'
+import { EditEntryModal } from '@/components/EditEntryModal'
 import { ManualEntryModal } from '@/components/ManualEntryModal'
 import { TimeBarView } from '@/components/TimeBarView'
 import { Button } from '@/components/ui/button'
@@ -30,7 +31,15 @@ import {
   saveRecords,
   saveRunningRecord,
 } from './storage'
-import { formatClock, formatDuration, formatDurationHMS, getTodayRange } from './timeUtils'
+import {
+  filterRecordsByDate,
+  formatClock,
+  formatDateKey,
+  formatDuration,
+  formatDurationHMS,
+  isSameDay,
+  startOfDay,
+} from './timeUtils'
 
 type TabKey = 'summary' | 'timeline'
 
@@ -98,9 +107,26 @@ function App() {
   const [isActivityManagerOpen, setIsActivityManagerOpen] = useState(false)
   const [activityDrafts, setActivityDrafts] = useState<Activity[]>([])
   const [isManualEntryOpen, setIsManualEntryOpen] = useState(false)
+  const [isEditEntryOpen, setIsEditEntryOpen] = useState(false)
+  const [editingEntry, setEditingEntry] = useState<RecordItem | null>(null)
+  const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()))
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
+  const datePickerRef = useRef<HTMLDivElement | null>(null)
+  const selectedDateKey = useMemo(() => formatDateKey(selectedDate), [selectedDate])
+  const recordsForSelectedDate = useMemo(
+    () => filterRecordsByDate(records, selectedDate),
+    [records, selectedDate],
+  )
+
+  const runningMatchesSelectedDate = useMemo(() => {
+    if (!runningRecord) return false
+    return runningRecord.dateKey ? runningRecord.dateKey === selectedDateKey : isSameDay(runningRecord.start, selectedDate)
+  }, [runningRecord, selectedDate, selectedDateKey])
+
   const runningDurationSeconds = useMemo(() => {
     if (!runningRecord) return 0
-    return Math.max(0, Math.floor((tick - runningRecord.start) / 1000))
+    const base = runningRecord.realStart ?? runningRecord.start
+    return Math.max(0, Math.floor((tick - base) / 1000))
   }, [runningRecord, tick])
 
   useEffect(() => {
@@ -111,27 +137,34 @@ function App() {
     return () => window.clearInterval(id)
   }, [runningRecord])
 
-  const todayRange = useMemo(() => getTodayRange(), [])
+  useEffect(() => {
+    if (!isDatePickerOpen) return
+    const handleClick = (event: MouseEvent) => {
+      if (!datePickerRef.current) return
+      if (!datePickerRef.current.contains(event.target as Node)) {
+        setIsDatePickerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [isDatePickerOpen])
 
-  const todayRecords = useMemo(
+  const selectedDateTotalSeconds = useMemo(() => {
+    const base = recordsForSelectedDate.reduce((sum, r) => sum + r.duration, 0)
+    return base + (runningMatchesSelectedDate ? runningDurationSeconds : 0)
+  }, [recordsForSelectedDate, runningMatchesSelectedDate, runningDurationSeconds])
+
+  const selectedDateLabel = useMemo(
     () =>
-      records.filter((r) => r.start >= todayRange.start && r.start < todayRange.end),
-    [records, todayRange.start, todayRange.end],
+      selectedDate.toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }),
+    [selectedDate],
   )
 
-  const todayTotalSeconds = useMemo(
-    () => todayRecords.reduce((sum, r) => sum + r.duration, 0),
-    [todayRecords],
-  )
-
-  const todayLabel = useMemo(() => {
-    const now = new Date()
-    return now.toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    })
-  }, [])
+  const isFutureSelectedDate = useMemo(() => startOfDay(selectedDate).getTime() > startOfDay(new Date()).getTime(), [selectedDate])
 
   const resetActivityForm = () => {
     setNewActivityName('')
@@ -157,6 +190,33 @@ function App() {
       return next
     })
     setIsManualEntryOpen(false)
+  }
+
+  const handleUpdateEntry = ({ id, activityId, start, end, remark }: { id: string } & ManualEntryPayload) => {
+    setRecords((prev) => {
+      const next = prev.map((record) =>
+        record.id === id
+          ? {
+              ...record,
+              activityId,
+              start,
+              end,
+              duration: Math.max(1, Math.floor((end - start) / 1000)),
+              remark,
+            }
+          : record,
+      )
+      const sorted = [...next].sort((a, b) => a.start - b.start)
+      saveRecords(sorted)
+      return sorted
+    })
+    setIsEditEntryOpen(false)
+    setEditingEntry(null)
+  }
+
+  const handleOpenEditEntry = (entry: RecordItem) => {
+    setEditingEntry(entry)
+    setIsEditEntryOpen(true)
   }
 
   const closeActivityForm = () => {
@@ -217,6 +277,10 @@ function App() {
       window.alert('请选择一个活动再开始计时。')
       return
     }
+    if (isFutureSelectedDate) {
+      window.alert('无法在未来日期启动计时。')
+      return
+    }
 
     const now = Date.now()
     const activity = activities.find((a) => a.id === selectedActivityId)
@@ -243,11 +307,17 @@ function App() {
       saveRecords(nextRecords)
     }
 
+    const currentInstant = new Date()
+    const startDateTime = new Date(selectedDate)
+    startDateTime.setHours(currentInstant.getHours(), currentInstant.getMinutes(), currentInstant.getSeconds(), currentInstant.getMilliseconds())
+    const alignedStart = startDateTime.getTime()
     const id = crypto.randomUUID()
     const newRunning: RunningRecord = {
       id,
       activityId: activity.id,
-      start: now,
+      start: alignedStart,
+      realStart: now,
+      dateKey: selectedDateKey,
       remark: remark.trim() || undefined,
       createdAt: now,
     }
@@ -260,14 +330,14 @@ function App() {
     if (!runningRecord) return
 
     const now = Date.now()
-    const end = now
-    const duration = Math.max(1, Math.floor((end - runningRecord.start) / 1000))
+    const elapsedSeconds = Math.max(1, Math.floor((now - (runningRecord.realStart ?? runningRecord.start)) / 1000))
+    const end = runningRecord.start + elapsedSeconds * 1000
     const finished: RecordItem = {
       id: runningRecord.id,
       activityId: runningRecord.activityId,
       start: runningRecord.start,
       end,
-      duration,
+      duration: elapsedSeconds,
       remark: runningRecord.remark,
       createdAt: runningRecord.createdAt,
     }
@@ -278,30 +348,19 @@ function App() {
     saveRunningRecord(null)
   }
 
-  const groupedSummary = useMemo(() => {
-    const map = new Map<string, { activityId: string; totalDuration: number; records: RecordItem[] }>()
-    for (const r of todayRecords) {
-      const entry = map.get(r.activityId) ?? {
-        activityId: r.activityId,
-        totalDuration: 0,
-        records: [],
-      }
-      entry.totalDuration += r.duration
-      entry.records.push(r)
-      map.set(r.activityId, entry)
-    }
-    return Array.from(map.values()).sort((a, b) => b.totalDuration - a.totalDuration)
-  }, [todayRecords])
+  const chronologicalRecords = useMemo(() => {
+    return [...recordsForSelectedDate].sort((a, b) => a.start - b.start)
+  }, [recordsForSelectedDate])
 
-  const effectiveTodayTotal = todayTotalSeconds + runningDurationSeconds
   const isRunning = Boolean(runningRecord)
-  const startButtonDisabled = !isRunning && !selectedActivityId
+  const startButtonDisabled = isRunning ? false : !selectedActivityId || isFutureSelectedDate
   const startButtonClassName = cn(
     'h-10 rounded-lg px-4 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
     isRunning
       ? 'border border-[#FFDBD2] bg-[#FFECE8] text-[#D64545] hover:bg-[#FFE0D8] active:bg-[#FFD6CF]'
       : 'border border-[#D0D0D0] bg-[#F0F0F0] text-[#333333] hover:bg-[#E8E8E8] active:bg-[#DDDDDD]'
   )
+  const startButtonTitle = !isRunning && isFutureSelectedDate ? 'Cannot start timer for a future date.' : undefined
 
   const handleCreateActivity = () => {
     const name = newActivityName.trim()
@@ -340,9 +399,33 @@ function App() {
               A lightweight companion to keep Lyubischev-inspired records.
             </p>
           </div>
-          <div className="flex flex-col items-start text-sm text-[#888888] md:items-end">
-            <p className="text-base font-medium text-[#1F1F1F]">Today · {todayLabel}</p>
-            <p className="text-sm">Total {formatDuration(effectiveTodayTotal)}</p>
+          <div className="relative flex flex-col items-start text-sm text-[#888888] md:items-end">
+            <button
+              type="button"
+              onClick={() => setIsDatePickerOpen((prev) => !prev)}
+              className="text-left text-base font-medium text-[#1F1F1F] hover:text-[#555555]"
+            >
+              {isSameDay(selectedDate, new Date()) ? `Today · ${selectedDateLabel}` : selectedDateLabel}
+            </button>
+            <p className="text-sm">Total {formatDuration(selectedDateTotalSeconds)}</p>
+            {isDatePickerOpen && (
+              <div
+                ref={datePickerRef}
+                className="absolute right-0 top-full z-20 mt-2 rounded-[12px] border border-[#E0E0E0] bg-white p-3 shadow-lg"
+              >
+                <Input
+                  type="date"
+                  value={formatDateKey(selectedDate)}
+                  onChange={(event) => {
+                    if (!event.target.value) return
+                    const next = startOfDay(new Date(event.target.value))
+                    setSelectedDate(next)
+                    setIsDatePickerOpen(false)
+                  }}
+                  className="w-full"
+                />
+              </div>
+            )}
           </div>
         </header>
 
@@ -406,6 +489,7 @@ function App() {
                   onClick={isRunning ? handleStop : handleStart}
                   disabled={startButtonDisabled}
                   className={startButtonClassName}
+                  title={startButtonTitle}
                 >
                   <span className="mr-2 text-base">{isRunning ? '■' : '▶'}</span>
                   {isRunning ? 'Stop' : 'Start'}
@@ -661,44 +745,45 @@ function App() {
           <TabsContent value="summary">
             <Card>
               <CardContent className="space-y-4 pt-6 text-sm">
-                {groupedSummary.length === 0 ? (
+                {chronologicalRecords.length === 0 ? (
                   <p className="text-muted-foreground">
-                    今天还没有记录。选择一个活动并点击 Start 开始计时。
+                    该日期还没有记录。选择一个活动并点击 Start 开始计时。
                   </p>
                 ) : (
-                  groupedSummary.map((group) => {
-                    const activity = activities.find((a) => a.id === group.activityId)
-                    const tintedBackground = getAlphaColor(activity?.color, 0.04) ?? '#F8F8F8'
+                  chronologicalRecords.map((record) => {
+                    const activity = activities.find((a) => a.id === record.activityId)
+                    const tintedBackground = getAlphaColor(activity?.color, 0.1) ?? '#F8F8F8'
                     return (
                       <div
-                        key={group.activityId}
+                        key={record.id}
                         className="rounded-[12px] border border-[#E8E8E8] px-5 py-4"
                         style={{
                           backgroundColor: tintedBackground,
                           boxShadow: '0 1px 1px rgba(0,0,0,0.03)',
                         }}
                       >
-                        <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-start justify-between gap-4">
                           <div className="flex items-center gap-2 text-base font-semibold text-[#333333]">
                             {activity?.icon && <span className="text-lg" aria-hidden>{activity.icon}</span>}
                             <span>{activity ? activity.name : '已删除活动'}</span>
                           </div>
-                          <span className="text-sm font-medium text-[#555555]">
-                            {formatDuration(group.totalDuration)}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-[#555555]">
+                              {formatClock(record.start)}–{formatClock(record.end)} ({formatDuration(record.duration)})
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditEntry(record)}
+                              aria-label="编辑记录"
+                              className="rounded-full p-1 text-lg text-[#888888] transition hover:bg-[#F0F0F0]"
+                            >
+                              ⋯
+                            </button>
+                          </div>
                         </div>
-                        <ul className="mt-3 space-y-2 text-sm text-[#999999]">
-                          {group.records.map((r) => (
-                            <li key={r.id} className="flex flex-col">
-                              <span className="font-normal">
-                                {formatClock(r.start)}–{formatClock(r.end)} ({formatDuration(r.duration)})
-                              </span>
-                              {r.remark && (
-                                <span className="text-xs text-[#888888]">备注：{r.remark}</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
+                        {record.remark && (
+                          <p className="mt-2 text-xs text-[#888888]">备注：{record.remark}</p>
+                        )}
                       </div>
                     )
                   })
@@ -709,24 +794,37 @@ function App() {
           <TabsContent value="timeline">
             <Card>
               <CardContent className="space-y-5 pt-6 text-sm">
-                <p className="font-medium text-foreground">Today&apos;s timeline</p>
+                <p className="font-medium text-foreground">
+                  {isSameDay(selectedDate, new Date()) ? "Today’s timeline" : 'Timeline'}
+                </p>
                 <div className="my-4">
-                  <TimeBarView entries={todayRecords} activities={activities} />
+                  <TimeBarView entries={recordsForSelectedDate} activities={activities} />
                 </div>
-                {todayRecords.length === 0 ? (
-                  <p className="text-muted-foreground">No records yet. Start an activity to begin tracking time.</p>
+                {recordsForSelectedDate.length === 0 ? (
+                  <p className="text-muted-foreground">No records for this date yet. Start an activity to begin tracking time.</p>
                 ) : (
                   <ul className="space-y-2 text-xs text-muted-foreground">
-                    {todayRecords.map((r) => {
+                    {recordsForSelectedDate.map((r) => {
                       const activity = activities.find((a) => a.id === r.activityId)
                       return (
-                        <li key={r.id} className="flex justify-between">
-                          <span>
-                            {formatClock(r.start)}–{formatClock(r.end)}{' '}
-                            {activity ? activity.name : '已删除活动'}
-                            {r.remark ? ` · 备注：${r.remark}` : ''}
-                          </span>
-                          <span>{formatDuration(r.duration)}</span>
+                        <li key={r.id} className="flex flex-col gap-1 border-b border-dashed border-border pb-2 last:border-b-0">
+                          <div className="flex items-start justify-between gap-3">
+                            <span>
+                              {formatClock(r.start)}–{formatClock(r.end)} {activity ? activity.name : '已删除活动'}
+                              {r.remark ? ` · 备注：${r.remark}` : ''}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span>{formatDuration(r.duration)}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditEntry(r)}
+                                aria-label="编辑记录"
+                                className="rounded-full p-1 text-lg text-[#888888] transition hover:bg-[#F0F0F0]"
+                              >
+                                ⋯
+                              </button>
+                            </div>
+                          </div>
                         </li>
                       )
                     })}
@@ -740,8 +838,19 @@ function App() {
       <ManualEntryModal
         open={isManualEntryOpen}
         activities={activities}
+        initialDate={selectedDate}
         onClose={() => setIsManualEntryOpen(false)}
         onSave={handleSaveManualEntry}
+      />
+      <EditEntryModal
+        open={isEditEntryOpen}
+        entry={editingEntry}
+        activities={activities}
+        onClose={() => {
+          setIsEditEntryOpen(false)
+          setEditingEntry(null)
+        }}
+        onSave={handleUpdateEntry}
       />
     </div>
   )

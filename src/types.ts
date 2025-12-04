@@ -21,6 +21,8 @@ export type RunningRecord = {
   id: string
   activityId: string
   start: number
+  realStart?: number
+  dateKey: string
   remark?: string
   createdAt: number
 }
