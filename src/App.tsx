@@ -1,5 +1,7 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from 'react'
 import { AnalogClock } from '@/components/AnalogClock'
+import { ManualEntryModal } from '@/components/ManualEntryModal'
+import { TimeBarView } from '@/components/TimeBarView'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -31,6 +33,13 @@ import {
 import { formatClock, formatDuration, formatDurationHMS, getTodayRange } from './timeUtils'
 
 type TabKey = 'summary' | 'timeline'
+
+type ManualEntryPayload = {
+  activityId: string
+  start: number
+  end: number
+  remark?: string
+}
 
 const COLOR_PRESETS = [
   '#FDCEDF',
@@ -88,6 +97,7 @@ function App() {
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false)
   const [isActivityManagerOpen, setIsActivityManagerOpen] = useState(false)
   const [activityDrafts, setActivityDrafts] = useState<Activity[]>([])
+  const [isManualEntryOpen, setIsManualEntryOpen] = useState(false)
   const runningDurationSeconds = useMemo(() => {
     if (!runningRecord) return 0
     return Math.max(0, Math.floor((tick - runningRecord.start) / 1000))
@@ -128,6 +138,25 @@ function App() {
     setNewActivityIcon('')
     setNewActivityColor('')
     setIsEmojiPickerOpen(false)
+  }
+
+  const handleSaveManualEntry = ({ activityId, start, end, remark }: ManualEntryPayload) => {
+    const duration = Math.max(1, Math.floor((end - start) / 1000))
+    const newRecord: RecordItem = {
+      id: crypto.randomUUID(),
+      activityId,
+      start,
+      end,
+      duration,
+      remark,
+      createdAt: Date.now(),
+    }
+    setRecords((prev) => {
+      const next = [...prev, newRecord].sort((a, b) => a.start - b.start)
+      saveRecords(next)
+      return next
+    })
+    setIsManualEntryOpen(false)
   }
 
   const closeActivityForm = () => {
@@ -333,6 +362,14 @@ function App() {
               className="h-9 rounded-lg border border-[#E5E5E5] bg-[#F7F7F7] px-3 py-1.5 text-sm font-medium text-[#1F1F1F] hover:bg-[#F0F0F0] disabled:cursor-not-allowed disabled:opacity-60"
             >
               Edit Activities
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setIsManualEntryOpen(true)}
+              disabled={activities.length === 0}
+              className="h-9 rounded-lg border border-[#E5E5E5] bg-[#F7F7F7] px-3 py-1.5 text-sm font-medium text-[#1F1F1F] hover:bg-[#F0F0F0] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              + Add Manual Entry
             </Button>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
@@ -671,8 +708,11 @@ function App() {
           </TabsContent>
           <TabsContent value="timeline">
             <Card>
-              <CardContent className="space-y-3 pt-6 text-sm">
+              <CardContent className="space-y-5 pt-6 text-sm">
                 <p className="font-medium text-foreground">Today&apos;s timeline</p>
+                <div className="my-4">
+                  <TimeBarView entries={todayRecords} activities={activities} />
+                </div>
                 {todayRecords.length === 0 ? (
                   <p className="text-muted-foreground">No records yet. Start an activity to begin tracking time.</p>
                 ) : (
@@ -697,6 +737,12 @@ function App() {
           </TabsContent>
         </Tabs>
       </div>
+      <ManualEntryModal
+        open={isManualEntryOpen}
+        activities={activities}
+        onClose={() => setIsManualEntryOpen(false)}
+        onSave={handleSaveManualEntry}
+      />
     </div>
   )
 }
