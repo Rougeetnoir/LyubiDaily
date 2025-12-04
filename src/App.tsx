@@ -607,9 +607,19 @@ function App() {
           onValueChange={(value) => setActiveTab(value as TabKey)}
           className="space-y-4"
         >
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="summary">Summary</TabsTrigger>
-            <TabsTrigger value="timeline">Timeline</TabsTrigger>
+          <TabsList className="mx-auto flex w-fit items-center gap-1 rounded-[12px] border border-[#E5E5E5] bg-[#F6F6F6] p-1">
+            <TabsTrigger
+              value="summary"
+              className="rounded-[8px] border border-transparent bg-[#F2F2F2] px-5 py-2 text-base font-medium text-[#777777] transition-all hover:bg-[#EDEDED] data-[state=active]:border-[#E5E5E5] data-[state=active]:bg-white data-[state=active]:text-[#333333] data-[state=active]:shadow-sm data-[state=active]:font-semibold"
+            >
+              Summary
+            </TabsTrigger>
+            <TabsTrigger
+              value="timeline"
+              className="rounded-[8px] border border-transparent bg-[#F2F2F2] px-5 py-2 text-base font-medium text-[#777777] transition-all hover:bg-[#EDEDED] data-[state=active]:border-[#E5E5E5] data-[state=active]:bg-white data-[state=active]:text-[#333333] data-[state=active]:shadow-sm data-[state=active]:font-semibold"
+            >
+              Timeline
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="summary">
             <Card>
@@ -621,33 +631,34 @@ function App() {
                 ) : (
                   groupedSummary.map((group) => {
                     const activity = activities.find((a) => a.id === group.activityId)
-                    const background = getAlphaColor(activity?.color, 0.18)
-                    const borderColor = getAlphaColor(activity?.color, 0.45)
+                    const tintedBackground = getAlphaColor(activity?.color, 0.04) ?? '#F8F8F8'
                     return (
                       <div
                         key={group.activityId}
-                        className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3"
+                        className="rounded-[12px] border border-[#E8E8E8] px-5 py-4"
                         style={{
-                          backgroundColor: background ?? undefined,
-                          borderColor: borderColor ?? undefined,
+                          backgroundColor: tintedBackground,
+                          boxShadow: '0 1px 1px rgba(0,0,0,0.03)',
                         }}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 font-medium">
-                            {activity?.icon && <span>{activity.icon}</span>}
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-2 text-base font-semibold text-[#333333]">
+                            {activity?.icon && <span className="text-lg" aria-hidden>{activity.icon}</span>}
                             <span>{activity ? activity.name : '已删除活动'}</span>
                           </div>
-                          <span className="text-xs text-muted-foreground">
+                          <span className="text-sm font-medium text-[#555555]">
                             {formatDuration(group.totalDuration)}
                           </span>
                         </div>
-                        <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        <ul className="mt-3 space-y-2 text-sm text-[#999999]">
                           {group.records.map((r) => (
-                            <li key={r.id} className="flex justify-between">
-                              <span>
+                            <li key={r.id} className="flex flex-col">
+                              <span className="font-normal">
                                 {formatClock(r.start)}–{formatClock(r.end)} ({formatDuration(r.duration)})
-                                {r.remark ? ` · 备注：${r.remark}` : ''}
                               </span>
+                              {r.remark && (
+                                <span className="text-xs text-[#888888]">备注：{r.remark}</span>
+                              )}
                             </li>
                           ))}
                         </ul>
