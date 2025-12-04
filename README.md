@@ -1,73 +1,27 @@
-# React + TypeScript + Vite
+# Lyubi Daily
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Lyubi Daily 是一个受柳比歇夫记录法启发的日常时间记账应用，基于 React、TypeScript 与 Vite 搭建。
 
-Currently, two official plugins are available:
+## 功能概览
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- 选择活动后开始/停止计时，支持备注。
+- Summary 视图按活动分组，展示起止时间与耗时；Timeline 视图按时间顺序列出当天记录。
+- 活动支持自定义名称、Emoji、预设或自定义颜色，并可在管理面板中批量编辑。
 
-## React Compiler
+## 版本记录
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### v1（当前）
 
-## Expanding the ESLint configuration
+- 实时计时显示 `hh:mm:ss`。
+- 活动创建表单提供 10 个颜色预设与 Emoji 选择器，并对输入颜色做规范化处理。
+- Summary 视图使用活动色为统计卡片添加弱背景与虚线边框。
+- 新增 "Edit Activities" 管理面板，可一次性修改所有活动的名称、Emoji 与颜色，并提供即时的颜色背景预览。
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 协作流程
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+每当一个阶段的需求完成并获得确认时：
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+1. 我会提供一句可直接使用的 `git commit` message（例如 `feat: finalize v1 activity manager`）。
+2. 会在本 README 中追加相应版本或阶段说明，确保有据可查。
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+确认当前阶段为 v1，后续阶段请继续以相同方式沟通即可。

@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { cn } from '@/lib/utils'
 import type { Activity, RecordItem, RunningRecord } from './types'
 import {
   loadActivities,
@@ -27,9 +28,50 @@ import {
   saveRecords,
   saveRunningRecord,
 } from './storage'
-import { formatClock, formatDuration, getTodayRange } from './timeUtils'
+import { formatClock, formatDuration, formatDurationHMS, getTodayRange } from './timeUtils'
 
 type TabKey = 'summary' | 'timeline'
+
+const COLOR_PRESETS = [
+  '#FDCEDF',
+  '#DBE2EF',
+  '#DCD6F7',
+  '#EEE3CB',
+  '#D7C0AE',
+  '#967E76',
+  '#BDD2B6',
+  '#F67280',
+  '#E0F9B5',
+  '#FEFDCA',
+] as const
+
+const EMOJI_PRESETS = ['💼', '📚', '🧠', '🏃‍♂️', '🏠', '🎮', '✍️', '🧩', '🧘‍♀️', '🧑‍💻'] as const
+
+const normalizeHexColor = (input?: string) => {
+  if (!input) return undefined
+  let hex = input.trim()
+  if (!hex) return undefined
+  if (!hex.startsWith('#')) hex = `#${hex}`
+  const hexRegex = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/
+  if (!hexRegex.test(hex)) return undefined
+  if (hex.length === 4) {
+    hex = `#${hex
+      .slice(1)
+      .split('')
+      .map((ch) => `${ch}${ch}`)
+      .join('')}`
+  }
+  return hex.toUpperCase()
+}
+
+const getAlphaColor = (input: string | undefined, alpha: number) => {
+  const hex = normalizeHexColor(input)
+  if (!hex) return undefined
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
 
 function App() {
   const [activities, setActivities] = useState<Activity[]>(() => loadActivities())
@@ -44,6 +86,8 @@ function App() {
   const [newActivityIcon, setNewActivityIcon] = useState('')
   const [newActivityColor, setNewActivityColor] = useState('')
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false)
+  const [isActivityManagerOpen, setIsActivityManagerOpen] = useState(false)
+  const [activityDrafts, setActivityDrafts] = useState<Activity[]>([])
   const runningDurationSeconds = useMemo(() => {
     if (!runningRecord) return 0
     return Math.max(0, Math.floor((tick - runningRecord.start) / 1000))
@@ -78,6 +122,66 @@ function App() {
       day: 'numeric',
     })
   }, [])
+
+  const resetActivityForm = () => {
+    setNewActivityName('')
+    setNewActivityIcon('')
+    setNewActivityColor('')
+    setIsEmojiPickerOpen(false)
+  }
+
+  const closeActivityForm = () => {
+    setIsAddingActivity(false)
+    resetActivityForm()
+  }
+
+  const handleOpenCreateActivity = () => {
+    resetActivityForm()
+    setIsAddingActivity(true)
+  }
+
+  const handleOpenActivityManager = () => {
+    setActivityDrafts(activities.map((activity) => ({ ...activity })))
+    setIsActivityManagerOpen(true)
+  }
+
+  const handleCloseActivityManager = () => {
+    setIsActivityManagerOpen(false)
+    setActivityDrafts([])
+  }
+
+  const handleActivityDraftChange = (id: string, changes: Partial<Activity>) => {
+    setActivityDrafts((prev) => prev.map((draft) => (draft.id === id ? { ...draft, ...changes } : draft)))
+  }
+
+  const handleSelectDraftColor = (id: string, color: string) => {
+    handleActivityDraftChange(id, { color })
+  }
+
+  const handleSelectDraftEmoji = (id: string, emoji: string) => {
+    handleActivityDraftChange(id, { icon: emoji })
+  }
+
+  const handleSaveActivityDrafts = () => {
+    if (activityDrafts.some((draft) => !draft.name.trim())) {
+      window.alert('活动名称不能为空。')
+      return
+    }
+
+    const now = Date.now()
+    const normalizedDrafts = activityDrafts.map((draft) => ({
+      ...draft,
+      name: draft.name.trim(),
+      icon: draft.icon?.trim() || undefined,
+      color: normalizeHexColor(draft.color) ?? undefined,
+      updatedAt: now,
+    }))
+
+    setActivities(normalizedDrafts)
+    saveActivities(normalizedDrafts)
+    setSelectedActivityId((prev) => (normalizedDrafts.some((activity) => activity.id === prev) ? prev : ''))
+    handleCloseActivityManager()
+  }
 
   const handleStart = () => {
     if (!selectedActivityId) {
@@ -170,24 +274,23 @@ function App() {
     }
 
     const now = Date.now()
+    const normalizedColor = normalizeHexColor(newActivityColor)
+    const icon = newActivityIcon.trim() || undefined
+
     const next: Activity[] = [
       ...activities,
       {
         id: crypto.randomUUID(),
         name,
-        icon: newActivityIcon.trim() || undefined,
-        color: newActivityColor.trim() || undefined,
+        icon,
+        color: normalizedColor,
         createdAt: now,
         updatedAt: now,
       },
     ]
     setActivities(next)
     saveActivities(next)
-    setNewActivityName('')
-    setNewActivityIcon('')
-    setNewActivityColor('')
-    setIsAddingActivity(false)
-    setIsEmojiPickerOpen(false)
+    closeActivityForm()
   }
 
   return (
@@ -210,8 +313,16 @@ function App() {
         <Card>
           <CardContent className="flex flex-col gap-4 py-6 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-1 flex-wrap items-center gap-3">
-              <Button variant="outline" onClick={() => setIsAddingActivity(true)} className="whitespace-nowrap">
+              <Button variant="outline" onClick={handleOpenCreateActivity} className="whitespace-nowrap">
                 + Add Activity
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={handleOpenActivityManager}
+                disabled={activities.length === 0}
+                className="whitespace-nowrap"
+              >
+                Edit Activities
               </Button>
               <Separator orientation="vertical" className="hidden h-10 sm:block" />
               <Select
@@ -253,7 +364,7 @@ function App() {
                 <p className="text-xs text-muted-foreground">
                   计时中：
                   {activities.find((a) => a.id === runningRecord.activityId)?.name ?? '未知活动'} ·{' '}
-                  {formatDuration(runningDurationSeconds)}
+                  {formatDurationHMS(runningDurationSeconds)}
                 </p>
               )}
             </div>
@@ -270,13 +381,7 @@ function App() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  setIsAddingActivity(false)
-                  setNewActivityName('')
-                  setNewActivityIcon('')
-                  setNewActivityColor('')
-                  setIsEmojiPickerOpen(false)
-                }}
+                onClick={closeActivityForm}
               >
                 Close
               </Button>
@@ -300,6 +405,23 @@ function App() {
                     value={newActivityColor}
                     onChange={(event: ChangeEvent<HTMLInputElement>) => setNewActivityColor(event.target.value)}
                   />
+                  <div className="flex flex-wrap gap-2">
+                    {COLOR_PRESETS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        className={cn(
+                          'h-8 w-8 rounded-full border border-border transition hover:scale-[1.05]',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                          newActivityColor?.toLowerCase() === color.toLowerCase() && 'ring-2 ring-ring border-ring',
+                        )}
+                        style={{ backgroundColor: color }}
+                        onClick={() => setNewActivityColor(color)}
+                        aria-label={`选择颜色 ${color}`}
+                        title={color}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
               <div className="space-y-2">
@@ -318,7 +440,7 @@ function App() {
                   {isEmojiPickerOpen && (
                     <div className="relative">
                       <div className="absolute right-0 top-2 z-10 flex max-w-xs flex-wrap gap-1 rounded-md border bg-popover p-2 text-lg shadow-lg">
-                        {['💼', '📚', '🧠', '🏃‍♂️', '🏠', '🎮', '✍️', '🧩', '🧘‍♀️', '🧑‍💻'].map((emoji) => (
+                        {EMOJI_PRESETS.map((emoji) => (
                           <button
                             key={emoji}
                             type="button"
@@ -340,17 +462,124 @@ function App() {
                 <Button onClick={handleCreateActivity}>Save</Button>
                 <Button
                   variant="outline"
-                  onClick={() => {
-                    setIsAddingActivity(false)
-                    setNewActivityName('')
-                    setNewActivityIcon('')
-                    setNewActivityColor('')
-                    setIsEmojiPickerOpen(false)
-                  }}
+                  onClick={closeActivityForm}
                 >
                   Cancel
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {isActivityManagerOpen && (
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between space-y-0">
+              <div>
+                <CardTitle>Manage activities</CardTitle>
+                <CardDescription>Inline edit names, emoji and colors for all activities.</CardDescription>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="ghost" size="sm" onClick={handleCloseActivityManager}>
+                  Close
+                </Button>
+                <Button size="sm" onClick={handleSaveActivityDrafts}>
+                  Save all
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {activityDrafts.length === 0 ? (
+                <p className="text-sm text-muted-foreground">没有可编辑的活动。</p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="hidden grid-cols-[1.5fr_minmax(0,0.6fr)_minmax(0,0.9fr)] gap-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:grid">
+                    <div>Name</div>
+                    <div>Emoji</div>
+                    <div>Color</div>
+                  </div>
+                  {activityDrafts.map((activity) => {
+                    const previewColor = normalizeHexColor(activity.color)
+                    const rowBackground = getAlphaColor(previewColor, 0.2)
+                    const rowBorder = getAlphaColor(previewColor, 0.5)
+                    return (
+                      <div
+                        key={activity.id}
+                        className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3 sm:grid sm:grid-cols-[1.5fr_minmax(0,0.6fr)_minmax(0,0.9fr)] sm:items-center sm:gap-4"
+                        style={{
+                          backgroundColor: rowBackground ?? undefined,
+                          borderColor: rowBorder ?? undefined,
+                        }}
+                      >
+                        <Input
+                          value={activity.name}
+                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                            handleActivityDraftChange(activity.id, { name: event.target.value })
+                          }
+                          placeholder="Activity name"
+                        />
+                        <div className="space-y-2">
+                          <Input
+                            value={activity.icon ?? ''}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                              handleActivityDraftChange(activity.id, { icon: event.target.value || undefined })
+                            }
+                            placeholder="😊"
+                            className="sm:max-w-[120px]"
+                          />
+                          <div className="flex flex-wrap gap-1">
+                            {EMOJI_PRESETS.map((emoji) => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                className={cn(
+                                  'inline-flex h-8 w-8 items-center justify-center rounded-md border text-lg transition hover:bg-muted',
+                                  activity.icon === emoji && 'border-ring bg-muted ring-2 ring-ring',
+                                )}
+                                onClick={() => handleSelectDraftEmoji(activity.id, emoji)}
+                                aria-label={`选择表情 ${emoji}`}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={activity.color ?? ''}
+                              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                handleActivityDraftChange(activity.id, { color: event.target.value })
+                              }
+                              placeholder="#2563eb"
+                              className="sm:max-w-[160px]"
+                            />
+                            <span
+                              className="h-8 w-8 rounded-full border"
+                              style={{ backgroundColor: previewColor ?? 'transparent' }}
+                              aria-label={`当前颜色 ${previewColor ?? '无'}`}
+                            />
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {COLOR_PRESETS.map((color) => (
+                              <button
+                                key={color}
+                                type="button"
+                                className={cn(
+                                  'h-7 w-7 rounded-full border border-border transition hover:scale-[1.05]',
+                                  previewColor?.toLowerCase() === color.toLowerCase() && 'ring-2 ring-ring border-ring',
+                                )}
+                                style={{ backgroundColor: color }}
+                                onClick={() => handleSelectDraftColor(activity.id, color)}
+                                aria-label={`选择颜色 ${color}`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -374,10 +603,16 @@ function App() {
                 ) : (
                   groupedSummary.map((group) => {
                     const activity = activities.find((a) => a.id === group.activityId)
+                    const background = getAlphaColor(activity?.color, 0.18)
+                    const borderColor = getAlphaColor(activity?.color, 0.45)
                     return (
                       <div
                         key={group.activityId}
                         className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3"
+                        style={{
+                          backgroundColor: background ?? undefined,
+                          borderColor: borderColor ?? undefined,
+                        }}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 font-medium">

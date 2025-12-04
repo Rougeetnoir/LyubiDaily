@@ -20,3 +20,14 @@ export const formatDuration = (seconds: number) => {
   if (h) return `${h}h`
   return `${m}m`
 }
+
+export const formatDurationHMS = (seconds: number) => {
+  const total = Math.max(0, Math.floor(seconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const hh = `${h}`.padStart(2, '0')
+  const mm = `${m}`.padStart(2, '0')
+  const ss = `${s}`.padStart(2, '0')
+  return `${hh}:${mm}:${ss}`
+}
