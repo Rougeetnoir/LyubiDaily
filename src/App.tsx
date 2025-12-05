@@ -35,6 +35,8 @@ import {
   fetchRecordsByDate,
   insertRecord,
   updateRecord,
+  deleteRecord,
+  deleteActivity,
 } from './storage'
 import {
   filterRecordsByDate,
@@ -161,6 +163,7 @@ function App() {
   const syncMessageTimer = useRef<number | null>(null)
   const [isInitialized, setIsInitialized] = useState(false)
   const lastSyncedDateRef = useRef<string | null>(null)
+  const [openRecordMenuId, setOpenRecordMenuId] = useState<string | null>(null)
 
   const showSyncError = (message = 'Cloud sync failed, using local data.') => {
     if (syncMessageTimer.current) {
@@ -397,6 +400,27 @@ function App() {
     setIsEditEntryOpen(true)
   }
 
+  const handleDeleteEntry = async (entry: RecordItem) => {
+    const confirmed = window.confirm('Delete this entry?\nThis action cannot be undone.')
+    if (!confirmed) return
+    const dateKey = getRecordDateKey(entry)
+    setOpenRecordMenuId(null)
+    setIsEditEntryOpen(false)
+    setEditingEntry(null)
+
+    setRecords((prev) => replaceRecordsForDate(prev.filter((r) => r.id !== entry.id), dateKey, []))
+    try {
+      await deleteRecord(entry.id)
+      setRecords((prev) => {
+        saveRecords(prev)
+        return prev
+      })
+    } catch (error) {
+      console.error('Failed to delete record from Supabase', error)
+      showSyncError()
+    }
+  }
+
   const closeActivityForm = () => {
     setIsAddingActivity(false)
     resetActivityForm()
@@ -427,6 +451,32 @@ function App() {
 
   const handleSelectDraftEmoji = (id: string, emoji: string) => {
     handleActivityDraftChange(id, { icon: emoji })
+  }
+
+  const handleDeleteActivityDraft = async (id: string) => {
+    const confirmed = window.confirm('Delete this activity?\nThis will remove the activity and may also remove any associated records.')
+    if (!confirmed) return
+
+    setActivityDrafts((prev) => prev.filter((draft) => draft.id !== id))
+    setActivities((prev) => prev.filter((activity) => activity.id !== id))
+    setRecords((prev) => {
+      const next = prev.filter((record) => record.activityId !== id)
+      saveRecords(next)
+      return next
+    })
+    if (selectedActivityId === id) {
+      setSelectedActivityId('')
+    }
+    try {
+      await deleteActivity(id)
+      setActivities((prev) => {
+        saveActivities(prev)
+        return prev
+      })
+    } catch (error) {
+      console.error('Failed to delete activity from Supabase', error)
+      showSyncError()
+    }
   }
 
   const handleSaveActivityDrafts = async () => {
@@ -834,10 +884,11 @@ function App() {
                 <p className="text-sm text-muted-foreground">没有可编辑的活动。</p>
               ) : (
                 <div className="space-y-3">
-                  <div className="hidden grid-cols-[1.5fr_minmax(0,0.6fr)_minmax(0,0.9fr)] gap-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:grid">
+                  <div className="hidden grid-cols-[1.5fr_minmax(0,0.6fr)_minmax(0,0.9fr)_auto] gap-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground sm:grid">
                     <div>Name</div>
                     <div>Emoji</div>
                     <div>Color</div>
+                    <div />
                   </div>
                   {activityDrafts.map((activity) => {
                     const previewColor = normalizeHexColor(activity.color)
@@ -846,7 +897,7 @@ function App() {
                     return (
                       <div
                         key={activity.id}
-                        className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3 sm:grid sm:grid-cols-[1.5fr_minmax(0,0.6fr)_minmax(0,0.9fr)] sm:items-center sm:gap-4"
+                        className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3 sm:grid sm:grid-cols-[1.5fr_minmax(0,0.6fr)_minmax(0,0.9fr)_auto] sm:items-center sm:gap-4"
                         style={{
                           backgroundColor: rowBackground ?? undefined,
                           borderColor: rowBorder ?? undefined,
@@ -917,6 +968,16 @@ function App() {
                             ))}
                           </div>
                         </div>
+                        <div className="flex justify-end">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteActivityDraft(activity.id)}
+                            className="text-red-600 hover:text-red-700"
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </div>
                     )
                   })}
@@ -974,14 +1035,37 @@ function App() {
                             <span className="text-sm font-medium text-[#555555]">
                               {formatClock(record.start)}–{formatClock(record.end)} ({formatDuration(record.duration)})
                             </span>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditEntry(record)}
-                              aria-label="编辑记录"
-                              className="rounded-full p-1 text-lg text-[#888888] transition hover:bg-[#F0F0F0]"
-                            >
-                              ⋯
-                            </button>
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() => setOpenRecordMenuId((prev) => (prev === record.id ? null : record.id))}
+                                aria-label="更多操作"
+                                className="rounded-full p-1 text-lg text-[#888888] transition hover:bg-[#F0F0F0]"
+                              >
+                                ⋯
+                              </button>
+                              {openRecordMenuId === record.id && (
+                                <div className="absolute right-0 top-full z-20 mt-1 w-32 overflow-hidden rounded-md border bg-white shadow-lg">
+                                  <button
+                                    type="button"
+                                    className="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                                    onClick={() => {
+                                      setOpenRecordMenuId(null)
+                                      handleOpenEditEntry(record)
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                                    onClick={() => handleDeleteEntry(record)}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                         {record.remark && (
@@ -1018,14 +1102,37 @@ function App() {
                             </span>
                             <div className="flex items-center gap-2">
                               <span>{formatDuration(r.duration)}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEditEntry(r)}
-                                aria-label="编辑记录"
-                                className="rounded-full p-1 text-lg text-[#888888] transition hover:bg-[#F0F0F0]"
-                              >
-                                ⋯
-                              </button>
+                              <div className="relative">
+                                <button
+                                  type="button"
+                                  onClick={() => setOpenRecordMenuId((prev) => (prev === r.id ? null : r.id))}
+                                  aria-label="更多操作"
+                                  className="rounded-full p-1 text-lg text-[#888888] transition hover:bg-[#F0F0F0]"
+                                >
+                                  ⋯
+                                </button>
+                                {openRecordMenuId === r.id && (
+                                  <div className="absolute right-0 top-full z-20 mt-1 w-32 overflow-hidden rounded-md border bg-white shadow-lg">
+                                    <button
+                                      type="button"
+                                      className="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                                      onClick={() => {
+                                        setOpenRecordMenuId(null)
+                                        handleOpenEditEntry(r)
+                                      }}
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+                                      onClick={() => handleDeleteEntry(r)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </li>
