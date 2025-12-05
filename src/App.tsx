@@ -138,6 +138,29 @@ const replaceRecordsForDate = (allRecords: RecordItem[], dateKey: string, dateRe
   return [...others, ...derived]
 }
 
+const useSyncBanner = () => {
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const syncMessageTimer = useRef<number | null>(null)
+
+  const showSyncMessage = (message = 'Cloud sync failed, using local data.') => {
+    if (syncMessageTimer.current) {
+      window.clearTimeout(syncMessageTimer.current)
+    }
+    setSyncMessage(message)
+    syncMessageTimer.current = window.setTimeout(() => setSyncMessage(null), 4000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (syncMessageTimer.current) {
+        window.clearTimeout(syncMessageTimer.current)
+      }
+    }
+  }, [])
+
+  return { syncMessage, showSyncMessage }
+}
+
 function App() {
   const [activities, setActivities] = useState<Activity[]>(() => loadActivities())
   const [records, setRecords] = useState<RecordItem[]>(() => ensureRecordsDerived(loadRecords()))
@@ -159,19 +182,10 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()))
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
   const datePickerRef = useRef<HTMLDivElement | null>(null)
-  const [syncMessage, setSyncMessage] = useState<string | null>(null)
-  const syncMessageTimer = useRef<number | null>(null)
+  const { syncMessage, showSyncMessage } = useSyncBanner()
   const [isInitialized, setIsInitialized] = useState(false)
   const lastSyncedDateRef = useRef<string | null>(null)
   const [openRecordMenuId, setOpenRecordMenuId] = useState<string | null>(null)
-
-  const showSyncError = (message = 'Cloud sync failed, using local data.') => {
-    if (syncMessageTimer.current) {
-      window.clearTimeout(syncMessageTimer.current)
-    }
-    setSyncMessage(message)
-    syncMessageTimer.current = window.setTimeout(() => setSyncMessage(null), 4000)
-  }
 
   const persistRecord = async (record: RecordItem) => {
     const derived = deriveRecordFields(record)
@@ -190,7 +204,7 @@ function App() {
       })
     } catch (error) {
       console.error('Failed to sync record to Supabase', error)
-      showSyncError()
+      showSyncMessage()
       setRecords((prev) => {
         saveRecords(prev)
         return prev
@@ -252,7 +266,7 @@ function App() {
         saveActivities(nextActivities)
       } catch (error) {
         console.error('Failed to load activities from Supabase, using local fallback', error)
-        showSyncError()
+        showSyncMessage()
       }
       setActivities(nextActivities)
       setSelectedActivityId((prev) => (nextActivities.some((a) => a.id === prev) ? prev : ''))
@@ -267,7 +281,7 @@ function App() {
         saveRecords(nextRecords)
       } catch (error) {
         console.error('Failed to load records from Supabase, using local fallback for selected date', error)
-        showSyncError()
+        showSyncMessage()
         const fallbackForDate = ensureRecordsDerived(filterRecordsByDate(localRecords, selectedDate))
         nextRecords = replaceRecordsForDate(localRecords, initialDateKey, fallbackForDate)
       }
@@ -276,12 +290,6 @@ function App() {
       setIsInitialized(true)
     }
     bootstrap()
-
-    return () => {
-      if (syncMessageTimer.current) {
-        window.clearTimeout(syncMessageTimer.current)
-      }
-    }
   }, [isInitialized, selectedDate])
 
   useEffect(() => {
@@ -300,7 +308,7 @@ function App() {
         lastSyncedDateRef.current = dateKey
       } catch (error) {
         console.error('Failed to load records for date from Supabase, using local fallback', error)
-        showSyncError()
+        showSyncMessage()
         const fallback = ensureRecordsDerived(filterRecordsByDate(loadRecords(), selectedDate))
         setRecords((prev) => replaceRecordsForDate(prev, dateKey, fallback))
         lastSyncedDateRef.current = dateKey
@@ -385,7 +393,7 @@ function App() {
       })
     } catch (error) {
       console.error('Failed to update record in Supabase', error)
-      showSyncError()
+        showSyncMessage()
       setRecords((prev) => {
         saveRecords(prev)
         return prev
@@ -417,7 +425,7 @@ function App() {
       })
     } catch (error) {
       console.error('Failed to delete record from Supabase', error)
-      showSyncError()
+      showSyncMessage()
     }
   }
 
@@ -475,7 +483,7 @@ function App() {
       })
     } catch (error) {
       console.error('Failed to delete activity from Supabase', error)
-      showSyncError()
+      showSyncMessage()
     }
   }
 
@@ -502,7 +510,7 @@ function App() {
       saveActivities(synced)
     } catch (error) {
       console.error('Failed to sync activities to Supabase', error)
-      showSyncError('活动已保存到本地，但同步到 Supabase 失败。')
+      showSyncMessage('活动已保存到本地，但同步到 Supabase 失败。')
     }
     setSelectedActivityId((prev) => (normalizedDrafts.some((activity) => activity.id === prev) ? prev : ''))
     handleCloseActivityManager()
@@ -632,7 +640,7 @@ function App() {
       saveActivities(synced)
     } catch (error) {
       console.error('Failed to create activity in Supabase', error)
-      showSyncError('活动已保存到本地，但同步到 Supabase 失败。')
+      showSyncMessage('活动已保存到本地，但同步到 Supabase 失败。')
     }
     closeActivityForm()
   }
