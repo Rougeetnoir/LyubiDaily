@@ -1,27 +1,55 @@
 # Lyubi Daily
 
-Lyubi Daily 是一个受柳比歇夫记录法启发的日常时间记账应用，基于 React、TypeScript 与 Vite 搭建。
+Lyubi Daily 是一个受柳比歇夫记录法启发的日常时间记账应用，提供 Summary（按活动分组）与 Timeline（按时间顺序）双视图，支持活动自定义、手动补录、以及跨设备云同步。Supabase 作为主存，localStorage 作为离线兜底。
 
-## 功能概览
+## Project Overview
 
-- 选择活动后开始/停止计时，支持备注。
-- Summary 视图按活动分组，展示起止时间与耗时；Timeline 视图按时间顺序列出当天记录。
-- 活动支持自定义名称、Emoji、预设或自定义颜色，并可在管理面板中批量编辑。
+- 选择活动后开始/停止计时，支持备注；支持手动补录时间段。
+- Summary 视图按活动分组展示起止时间与耗时；Timeline 视图按时间顺序列出当天记录。
+- 活动支持自定义名称、Emoji、预设或自定义颜色，管理面板可批量编辑。
+- Supabase 存储 activities 与 records，多设备共享；离线时写入 localStorage，网络恢复后再同步。
 
-## 版本记录
+## Tech Stack
 
-### v1（当前）
+- Vite + React + TypeScript
+- Supabase（Postgres + RLS）
+- TailwindCSS、Radix UI
 
-- 实时计时显示 `hh:mm:ss`。
-- 活动创建表单提供 10 个颜色预设与 Emoji 选择器，并对输入颜色做规范化处理。
-- Summary 视图使用活动色为统计卡片添加弱背景与虚线边框。
-- 新增 "Edit Activities" 管理面板，可一次性修改所有活动的名称、Emoji 与颜色，并提供即时的颜色背景预览。
+## Getting Started (Local Development)
 
-## 协作流程
+1. 安装依赖
+   ```bash
+   npm install
+   ```
+2. 配置环境变量，创建 `.env`（示例）：
+   ```bash
+   VITE_SUPABASE_URL=your-supabase-project-url
+   VITE_SUPABASE_ANON_KEY=your-anon-key
+   ```
+3. 启动开发服务
+   ```bash
+   npm run dev
+   ```
 
-每当一个阶段的需求完成并获得确认时：
+## Supabase Setup（概要）
 
-1. 我会提供一句可直接使用的 `git commit` message（例如 `feat: finalize v1 activity manager`）。
-2. 会在本 README 中追加相应版本或阶段说明，确保有据可查。
+准备数据库 schema（详见 docs/sync/）：
 
-确认当前阶段为 v1，后续阶段请继续以相同方式沟通即可。
+- `public.activities`: `id uuid PK`, `name text`, `icon text?`, `color text?`, `created_at timestamptz`, `updated_at timestamptz`
+- `public.records`: `id uuid PK`, `activity_id uuid FK -> activities.id`, `date date`, `start_time time`, `end_time time`, `remark text?`, `created_at timestamptz`, `updated_at timestamptz`
+
+开启 RLS，并为 anon 角色添加 select/insert/update/delete 策略，或按需收紧策略。
+
+## Lint & Build
+
+```bash
+npm run lint
+npm run build
+```
+
+## Deploying to Vercel
+
+- Build 命令：`npm run build`
+- Output 目录：`dist`
+- 环境变量：在 Vercel 项目设置中添加 `VITE_SUPABASE_URL` 与 `VITE_SUPABASE_ANON_KEY`
+- Vercel 会自动识别 Vite 框架，部署后使用同一 Supabase 后端。
