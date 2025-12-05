@@ -15,6 +15,10 @@ export type RecordItem = {
   duration: number
   remark?: string
   createdAt: number
+  updatedAt?: number
+  date?: string
+  startTime?: string
+  endTime?: string
 }
 
 export type RunningRecord = {

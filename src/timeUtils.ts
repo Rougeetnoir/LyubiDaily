@@ -48,5 +48,9 @@ export const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getM
 
 export const filterRecordsByDate = (records: RecordItem[], date: Date) => {
   const key = formatDateKey(date)
-  return records.filter((record) => formatDateKey(record.start) === key)
+  return records.filter((record) => {
+    if (record.date) return record.date === key
+    if (record.start) return formatDateKey(record.start) === key
+    return false
+  })
 }

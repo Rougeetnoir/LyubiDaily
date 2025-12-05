@@ -30,6 +30,11 @@ import {
   saveActivities,
   saveRecords,
   saveRunningRecord,
+  fetchActivitiesFromSupabase,
+  upsertActivitiesToSupabase,
+  fetchRecordsByDate,
+  insertRecord,
+  updateRecord,
 } from './storage'
 import {
   filterRecordsByDate,
@@ -91,9 +96,49 @@ const getAlphaColor = (input: string | undefined, alpha: number) => {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
+const padTime = (time: string) => (time.length === 5 ? `${time}:00` : time)
+
+const parseDateTimeToMs = (dateKey?: string, time?: string) => {
+  if (!dateKey || !time) return undefined
+  const parsed = Date.parse(`${dateKey}T${padTime(time)}`)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+const deriveRecordFields = (record: RecordItem): RecordItem => {
+  const startMs = record.start ?? parseDateTimeToMs(record.date, record.startTime) ?? Date.now()
+  const endMs =
+    record.end ??
+    parseDateTimeToMs(record.date, record.endTime) ??
+    (record.duration ? startMs + record.duration * 1000 : startMs)
+  const durationSeconds = Math.max(1, Math.floor(Math.max(0, endMs - startMs) / 1000))
+  const dateKey = record.date ?? formatDateKey(startMs)
+  const startTime = record.startTime ?? formatClock(startMs)
+  const endTime = record.endTime ?? formatClock(endMs)
+
+  return {
+    ...record,
+    start: startMs,
+    end: endMs,
+    duration: durationSeconds,
+    date: dateKey,
+    startTime,
+    endTime,
+  }
+}
+
+const ensureRecordsDerived = (list: RecordItem[]) => list.map(deriveRecordFields)
+
+const getRecordDateKey = (record: RecordItem) => record.date ?? (record.start ? formatDateKey(record.start) : '')
+
+const replaceRecordsForDate = (allRecords: RecordItem[], dateKey: string, dateRecords: RecordItem[]) => {
+  const derived = ensureRecordsDerived(dateRecords)
+  const others = allRecords.filter((record) => getRecordDateKey(record) !== dateKey)
+  return [...others, ...derived]
+}
+
 function App() {
   const [activities, setActivities] = useState<Activity[]>(() => loadActivities())
-  const [records, setRecords] = useState<RecordItem[]>(() => loadRecords())
+  const [records, setRecords] = useState<RecordItem[]>(() => ensureRecordsDerived(loadRecords()))
   const [runningRecord, setRunningRecord] = useState<RunningRecord | null>(() => loadRunningRecord())
   const [activeTab, setActiveTab] = useState<TabKey>('summary')
   const [selectedActivityId, setSelectedActivityId] = useState<string>('')
@@ -112,6 +157,43 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(() => startOfDay(new Date()))
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false)
   const datePickerRef = useRef<HTMLDivElement | null>(null)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const syncMessageTimer = useRef<number | null>(null)
+  const [isInitialized, setIsInitialized] = useState(false)
+  const lastSyncedDateRef = useRef<string | null>(null)
+
+  const showSyncError = (message = 'Cloud sync failed, using local data.') => {
+    if (syncMessageTimer.current) {
+      window.clearTimeout(syncMessageTimer.current)
+    }
+    setSyncMessage(message)
+    syncMessageTimer.current = window.setTimeout(() => setSyncMessage(null), 4000)
+  }
+
+  const persistRecord = async (record: RecordItem) => {
+    const derived = deriveRecordFields(record)
+    const dateKey = getRecordDateKey(derived)
+    setRecords((prev) => [...prev.filter((r) => r.id !== derived.id), derived])
+
+    try {
+      const remote = await insertRecord(derived)
+      const normalized = deriveRecordFields(remote)
+      const normalizedDateKey = getRecordDateKey(normalized)
+      setRecords((prev) => {
+        const withoutTemp = prev.filter((r) => r.id !== derived.id)
+        const merged = replaceRecordsForDate(withoutTemp, normalizedDateKey, [normalized])
+        saveRecords(merged)
+        return merged
+      })
+    } catch (error) {
+      console.error('Failed to sync record to Supabase', error)
+      showSyncError()
+      setRecords((prev) => {
+        saveRecords(prev)
+        return prev
+      })
+    }
+  }
   const selectedDateKey = useMemo(() => formatDateKey(selectedDate), [selectedDate])
   const recordsForSelectedDate = useMemo(
     () => filterRecordsByDate(records, selectedDate),
@@ -149,6 +231,81 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [isDatePickerOpen])
 
+  useEffect(() => {
+    if (isInitialized) return
+    const bootstrap = async () => {
+      const localActivities = loadActivities()
+      setActivities(localActivities)
+
+      let nextActivities = localActivities
+      try {
+        const remoteActivities = await fetchActivitiesFromSupabase()
+        if (remoteActivities.length > 0) {
+          nextActivities = remoteActivities
+        } else {
+          const synced = await upsertActivitiesToSupabase(localActivities)
+          nextActivities = synced
+        }
+        saveActivities(nextActivities)
+      } catch (error) {
+        console.error('Failed to load activities from Supabase, using local fallback', error)
+        showSyncError()
+      }
+      setActivities(nextActivities)
+      setSelectedActivityId((prev) => (nextActivities.some((a) => a.id === prev) ? prev : ''))
+
+      const localRecords = ensureRecordsDerived(loadRecords())
+      let nextRecords = localRecords
+      const initialDateKey = formatDateKey(selectedDate)
+      try {
+        const remoteRecords = await fetchRecordsByDate(initialDateKey)
+        const derivedRemote = ensureRecordsDerived(remoteRecords)
+        nextRecords = replaceRecordsForDate(localRecords, initialDateKey, derivedRemote)
+        saveRecords(nextRecords)
+      } catch (error) {
+        console.error('Failed to load records from Supabase, using local fallback for selected date', error)
+        showSyncError()
+        const fallbackForDate = ensureRecordsDerived(filterRecordsByDate(localRecords, selectedDate))
+        nextRecords = replaceRecordsForDate(localRecords, initialDateKey, fallbackForDate)
+      }
+      setRecords(nextRecords)
+      lastSyncedDateRef.current = initialDateKey
+      setIsInitialized(true)
+    }
+    bootstrap()
+
+    return () => {
+      if (syncMessageTimer.current) {
+        window.clearTimeout(syncMessageTimer.current)
+      }
+    }
+  }, [isInitialized, selectedDate])
+
+  useEffect(() => {
+    if (!isInitialized) return
+    const dateKey = formatDateKey(selectedDate)
+    if (lastSyncedDateRef.current === dateKey) return
+    const syncRecordsForDate = async () => {
+      try {
+        const remote = await fetchRecordsByDate(dateKey)
+        const derivedRemote = ensureRecordsDerived(remote)
+        setRecords((prev) => {
+          const merged = replaceRecordsForDate(prev, dateKey, derivedRemote)
+          saveRecords(merged)
+          return merged
+        })
+        lastSyncedDateRef.current = dateKey
+      } catch (error) {
+        console.error('Failed to load records for date from Supabase, using local fallback', error)
+        showSyncError()
+        const fallback = ensureRecordsDerived(filterRecordsByDate(loadRecords(), selectedDate))
+        setRecords((prev) => replaceRecordsForDate(prev, dateKey, fallback))
+        lastSyncedDateRef.current = dateKey
+      }
+    }
+    syncRecordsForDate()
+  }, [isInitialized, selectedDate])
+
   const selectedDateTotalSeconds = useMemo(() => {
     const base = recordsForSelectedDate.reduce((sum, r) => sum + r.duration, 0)
     return base + (runningMatchesSelectedDate ? runningDurationSeconds : 0)
@@ -173,43 +330,64 @@ function App() {
     setIsEmojiPickerOpen(false)
   }
 
-  const handleSaveManualEntry = ({ activityId, start, end, remark }: ManualEntryPayload) => {
+  const handleSaveManualEntry = async ({ activityId, start, end, remark }: ManualEntryPayload) => {
+    const now = Date.now()
     const duration = Math.max(1, Math.floor((end - start) / 1000))
-    const newRecord: RecordItem = {
+    const record = {
       id: crypto.randomUUID(),
       activityId,
       start,
       end,
       duration,
       remark,
-      createdAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
+      date: formatDateKey(start),
+      startTime: formatClock(start),
+      endTime: formatClock(end),
     }
-    setRecords((prev) => {
-      const next = [...prev, newRecord].sort((a, b) => a.start - b.start)
-      saveRecords(next)
-      return next
-    })
+    await persistRecord(record)
     setIsManualEntryOpen(false)
   }
 
-  const handleUpdateEntry = ({ id, activityId, start, end, remark }: { id: string } & ManualEntryPayload) => {
-    setRecords((prev) => {
-      const next = prev.map((record) =>
-        record.id === id
-          ? {
-              ...record,
-              activityId,
-              start,
-              end,
-              duration: Math.max(1, Math.floor((end - start) / 1000)),
-              remark,
-            }
-          : record,
-      )
-      const sorted = [...next].sort((a, b) => a.start - b.start)
-      saveRecords(sorted)
-      return sorted
+  const handleUpdateEntry = async ({ id, activityId, start, end, remark }: { id: string } & ManualEntryPayload) => {
+    const now = Date.now()
+    const existing = records.find((r) => r.id === id)
+    const updated = deriveRecordFields({
+      ...existing,
+      id,
+      activityId,
+      start,
+      end,
+      duration: Math.max(1, Math.floor((end - start) / 1000)),
+      remark,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      date: formatDateKey(start),
+      startTime: formatClock(start),
+      endTime: formatClock(end),
     })
+    const newDateKey = getRecordDateKey(updated)
+
+    setRecords((prev) => replaceRecordsForDate(prev.filter((r) => r.id !== id), newDateKey, [updated]))
+
+    try {
+      const remote = await updateRecord(updated)
+      const normalized = deriveRecordFields(remote)
+      setRecords((prev) => {
+        const withoutOld = prev.filter((r) => r.id !== id)
+        const merged = replaceRecordsForDate(withoutOld, getRecordDateKey(normalized), [normalized])
+        saveRecords(merged)
+        return merged
+      })
+    } catch (error) {
+      console.error('Failed to update record in Supabase', error)
+      showSyncError()
+      setRecords((prev) => {
+        saveRecords(prev)
+        return prev
+      })
+    }
     setIsEditEntryOpen(false)
     setEditingEntry(null)
   }
@@ -251,7 +429,7 @@ function App() {
     handleActivityDraftChange(id, { icon: emoji })
   }
 
-  const handleSaveActivityDrafts = () => {
+  const handleSaveActivityDrafts = async () => {
     if (activityDrafts.some((draft) => !draft.name.trim())) {
       window.alert('活动名称不能为空。')
       return
@@ -268,11 +446,19 @@ function App() {
 
     setActivities(normalizedDrafts)
     saveActivities(normalizedDrafts)
+    try {
+      const synced = await upsertActivitiesToSupabase(normalizedDrafts)
+      setActivities(synced)
+      saveActivities(synced)
+    } catch (error) {
+      console.error('Failed to sync activities to Supabase', error)
+      showSyncError('活动已保存到本地，但同步到 Supabase 失败。')
+    }
     setSelectedActivityId((prev) => (normalizedDrafts.some((activity) => activity.id === prev) ? prev : ''))
     handleCloseActivityManager()
   }
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!selectedActivityId) {
       window.alert('请选择一个活动再开始计时。')
       return
@@ -301,10 +487,12 @@ function App() {
         duration,
         remark: runningRecord.remark,
         createdAt: runningRecord.createdAt,
+        updatedAt: now,
+        date: runningRecord.dateKey ?? formatDateKey(runningRecord.start),
+        startTime: formatClock(runningRecord.start),
+        endTime: formatClock(end),
       }
-      const nextRecords = [...records, finished]
-      setRecords(nextRecords)
-      saveRecords(nextRecords)
+      await persistRecord(finished)
     }
 
     const currentInstant = new Date()
@@ -326,7 +514,7 @@ function App() {
     setRemark('')
   }
 
-  const handleStop = () => {
+  const handleStop = async () => {
     if (!runningRecord) return
 
     const now = Date.now()
@@ -340,10 +528,12 @@ function App() {
       duration: elapsedSeconds,
       remark: runningRecord.remark,
       createdAt: runningRecord.createdAt,
+      updatedAt: now,
+      date: runningRecord.dateKey ?? formatDateKey(runningRecord.start),
+      startTime: formatClock(runningRecord.start),
+      endTime: formatClock(end),
     }
-    const nextRecords = [...records, finished]
-    setRecords(nextRecords)
-    saveRecords(nextRecords)
+    await persistRecord(finished)
     setRunningRecord(null)
     saveRunningRecord(null)
   }
@@ -362,7 +552,7 @@ function App() {
   )
   const startButtonTitle = !isRunning && isFutureSelectedDate ? 'Cannot start timer for a future date.' : undefined
 
-  const handleCreateActivity = () => {
+  const handleCreateActivity = async () => {
     const name = newActivityName.trim()
     if (!name) {
       window.alert('活动名称不能为空。')
@@ -386,12 +576,25 @@ function App() {
     ]
     setActivities(next)
     saveActivities(next)
+    try {
+      const synced = await upsertActivitiesToSupabase(next)
+      setActivities(synced)
+      saveActivities(synced)
+    } catch (error) {
+      console.error('Failed to create activity in Supabase', error)
+      showSyncError('活动已保存到本地，但同步到 Supabase 失败。')
+    }
     closeActivityForm()
   }
 
   return (
     <div className="min-h-screen bg-muted/20 px-4 py-10">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
+        {syncMessage && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+            {syncMessage}
+          </div>
+        )}
         <header className="flex flex-col gap-4 border-b border-[#E5E5E5] py-6 md:flex-row md:items-center md:justify-between">
           <div className="space-y-2 text-left">
             <h1 className="text-[28px] font-bold text-[#1F1F1F]">Daily time ledger</h1>
