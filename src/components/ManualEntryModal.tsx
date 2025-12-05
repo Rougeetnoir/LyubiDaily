@@ -20,23 +20,33 @@ const formatDateInput = (date: Date) => {
   return `${year}-${month}-${day}`
 }
 
+type ManualFormState = {
+  activityId: string
+  date: string
+  startTime: string
+  endTime: string
+  remark: string
+  error: string | null
+}
+
+const buildInitialFormState = (date: Date): ManualFormState => ({
+  activityId: '',
+  date: formatDateInput(date),
+  startTime: '',
+  endTime: '',
+  remark: '',
+  error: null,
+})
+
 export function ManualEntryModal({ open, activities, initialDate, onClose, onSave }: ManualEntryModalProps) {
-  const [activityId, setActivityId] = useState('')
-  const [date, setDate] = useState(formatDateInput(initialDate))
-  const [startTime, setStartTime] = useState('')
-  const [endTime, setEndTime] = useState('')
-  const [remark, setRemark] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [form, setForm] = useState<ManualFormState>(() => buildInitialFormState(initialDate))
 
   useEffect(() => {
-    if (open) {
-      setActivityId('')
-      setDate(formatDateInput(initialDate))
-      setStartTime('')
-      setEndTime('')
-      setRemark('')
-      setError(null)
-    }
+    if (!open) return
+    const timer = window.setTimeout(() => {
+      setForm(buildInitialFormState(initialDate))
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [open, initialDate])
 
   useEffect(() => {
@@ -52,35 +62,38 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
   }, [open, onClose])
 
   const hasActivities = activities.length > 0
-  const activityOptions = useMemo(() => activities.map((a) => ({ id: a.id, label: `${a.icon ? `${a.icon} ` : ''}${a.name}` })), [activities])
+  const activityOptions = useMemo(
+    () => activities.map((a) => ({ id: a.id, label: `${a.icon ? `${a.icon} ` : ''}${a.name}` })),
+    [activities],
+  )
 
   if (!open) return null
 
   const handleSubmit = () => {
-    if (!activityId) {
-      setError('请选择一个活动')
+    if (!form.activityId) {
+      setForm((prev) => ({ ...prev, error: '请选择一个活动' }))
       return
     }
-    if (!startTime || !endTime || !date) {
-      setError('请完善日期和时间')
+    if (!form.startTime || !form.endTime || !form.date) {
+      setForm((prev) => ({ ...prev, error: '请完善日期和时间' }))
       return
     }
-    const start = new Date(`${date}T${startTime}:00`).getTime()
-    const end = new Date(`${date}T${endTime}:00`).getTime()
+    const start = new Date(`${form.date}T${form.startTime}:00`).getTime()
+    const end = new Date(`${form.date}T${form.endTime}:00`).getTime()
     if (Number.isNaN(start) || Number.isNaN(end)) {
-      setError('时间格式不正确')
+      setForm((prev) => ({ ...prev, error: '时间格式不正确' }))
       return
     }
     if (end <= start) {
-      setError('结束时间必须晚于开始时间')
+      setForm((prev) => ({ ...prev, error: '结束时间必须晚于开始时间' }))
       return
     }
-    setError(null)
+    setForm((prev) => ({ ...prev, error: null }))
     onSave({
-      activityId,
+      activityId: form.activityId,
       start,
       end,
-      remark: remark.trim() || undefined,
+      remark: form.remark.trim() || undefined,
     })
   }
 
@@ -99,7 +112,11 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
         <div className="space-y-4">
           <div className="space-y-2">
             <label className="text-sm font-medium text-[#333333]">Activity</label>
-            <Select value={activityId || undefined} onValueChange={(value) => setActivityId(value)} disabled={!hasActivities}>
+            <Select
+              value={form.activityId || undefined}
+              onValueChange={(value) => setForm((prev) => ({ ...prev, activityId: value }))}
+              disabled={!hasActivities}
+            >
               <SelectTrigger className="h-10 rounded-lg border border-[#E0E0E0]">
                 <SelectValue placeholder={hasActivities ? 'Select activity' : 'Please create an activity first'} />
               </SelectTrigger>
@@ -115,27 +132,42 @@ export function ManualEntryModal({ open, activities, initialDate, onClose, onSav
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <label className="text-sm font-medium text-[#333333]">Date</label>
-              <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-lg border-[#E0E0E0]" />
+              <Input
+                type="date"
+                value={form.date}
+                onChange={(event) => setForm((prev) => ({ ...prev, date: event.target.value }))}
+                className="rounded-lg border-[#E0E0E0]"
+              />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-[#333333]">Start time</label>
-              <Input type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} className="rounded-lg border-[#E0E0E0]" />
+              <Input
+                type="time"
+                value={form.startTime}
+                onChange={(event) => setForm((prev) => ({ ...prev, startTime: event.target.value }))}
+                className="rounded-lg border-[#E0E0E0]"
+              />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-[#333333]">End time</label>
-              <Input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className="rounded-lg border-[#E0E0E0]" />
+              <Input
+                type="time"
+                value={form.endTime}
+                onChange={(event) => setForm((prev) => ({ ...prev, endTime: event.target.value }))}
+                className="rounded-lg border-[#E0E0E0]"
+              />
             </div>
             <div className="space-y-2 sm:col-span-2">
               <label className="text-sm font-medium text-[#333333]">Remark</label>
               <Textarea
-                value={remark}
-                onChange={(event) => setRemark(event.target.value)}
+                value={form.remark}
+                onChange={(event) => setForm((prev) => ({ ...prev, remark: event.target.value }))}
                 className="rounded-lg border-[#E0E0E0]"
                 placeholder="Optional notes"
               />
             </div>
           </div>
-          {error && <p className="text-sm text-red-500">{error}</p>}
+          {form.error && <p className="text-sm text-red-500">{form.error}</p>}
         </div>
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose} className="px-4 py-2 text-sm text-[#555555]">

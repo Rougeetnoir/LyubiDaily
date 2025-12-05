@@ -21,25 +21,48 @@ const formatDateInput = (date: Date) => {
 }
 const formatTimeInput = (date: Date) => date.toTimeString().slice(0, 5)
 
+type EditFormState = {
+  activityId: string
+  date: string
+  startTime: string
+  endTime: string
+  remark: string
+  error: string | null
+}
+
+const buildInitialFormState = (source: RecordItem | null): EditFormState => {
+  const fallbackDate = new Date()
+  if (!source) {
+    return {
+      activityId: '',
+      date: formatDateInput(fallbackDate),
+      startTime: '',
+      endTime: '',
+      remark: '',
+      error: null,
+    }
+  }
+  const startDate = new Date(source.start)
+  const endDate = new Date(source.end ?? source.start + (source.duration ?? 0) * 1000)
+  return {
+    activityId: source.activityId,
+    date: formatDateInput(startDate),
+    startTime: formatTimeInput(startDate),
+    endTime: formatTimeInput(endDate),
+    remark: source.remark ?? '',
+    error: null,
+  }
+}
+
 export function EditEntryModal({ open, entry, activities, onClose, onSave }: EditEntryModalProps) {
-  const [activityId, setActivityId] = useState('')
-  const [date, setDate] = useState(formatDateInput(new Date()))
-  const [startTime, setStartTime] = useState('')
-  const [endTime, setEndTime] = useState('')
-  const [remark, setRemark] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [form, setForm] = useState<EditFormState>(() => buildInitialFormState(entry))
 
   useEffect(() => {
-    if (open && entry) {
-      const startDate = new Date(entry.start)
-      const endDate = new Date(entry.end ?? entry.start + entry.duration * 1000)
-      setActivityId(entry.activityId)
-      setDate(formatDateInput(startDate))
-      setStartTime(formatTimeInput(startDate))
-      setEndTime(formatTimeInput(endDate))
-      setRemark(entry.remark ?? '')
-      setError(null)
-    }
+    if (!open) return
+    const timer = window.setTimeout(() => {
+      setForm(buildInitialFormState(entry))
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [open, entry])
 
   useEffect(() => {
@@ -62,31 +85,31 @@ export function EditEntryModal({ open, entry, activities, onClose, onSave }: Edi
   if (!open || !entry) return null
 
   const handleSubmit = () => {
-    if (!activityId) {
-      setError('请选择一个活动')
+    if (!form.activityId) {
+      setForm((prev) => ({ ...prev, error: '请选择一个活动' }))
       return
     }
-    if (!startTime || !endTime || !date) {
-      setError('请完善日期和时间')
+    if (!form.startTime || !form.endTime || !form.date) {
+      setForm((prev) => ({ ...prev, error: '请完善日期和时间' }))
       return
     }
-    const start = new Date(`${date}T${startTime}:00`).getTime()
-    const end = new Date(`${date}T${endTime}:00`).getTime()
+    const start = new Date(`${form.date}T${form.startTime}:00`).getTime()
+    const end = new Date(`${form.date}T${form.endTime}:00`).getTime()
     if (Number.isNaN(start) || Number.isNaN(end)) {
-      setError('时间格式不正确')
+      setForm((prev) => ({ ...prev, error: '时间格式不正确' }))
       return
     }
     if (end <= start) {
-      setError('结束时间必须晚于开始时间')
+      setForm((prev) => ({ ...prev, error: '结束时间必须晚于开始时间' }))
       return
     }
-    setError(null)
+    setForm((prev) => ({ ...prev, error: null }))
     onSave({
       id: entry.id,
-      activityId,
+      activityId: form.activityId,
       start,
       end,
-      remark: remark.trim() || undefined,
+      remark: form.remark.trim() || undefined,
     })
   }
 
@@ -105,7 +128,7 @@ export function EditEntryModal({ open, entry, activities, onClose, onSave }: Edi
         <div className="space-y-4">
           <div className="space-y-2">
             <label className="text-sm font-medium text-[#333333]">Activity</label>
-            <Select value={activityId || undefined} onValueChange={(value) => setActivityId(value)}>
+            <Select value={form.activityId || undefined} onValueChange={(value) => setForm((prev) => ({ ...prev, activityId: value }))}>
               <SelectTrigger className="h-10 rounded-lg border border-[#E0E0E0]">
                 <SelectValue placeholder="Select activity" />
               </SelectTrigger>
@@ -121,27 +144,42 @@ export function EditEntryModal({ open, entry, activities, onClose, onSave }: Edi
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <label className="text-sm_FONT-medium text-[#333333]">Date</label>
-              <Input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="rounded-lg border-[#E0E0E0]" />
+              <Input
+                type="date"
+                value={form.date}
+                onChange={(event) => setForm((prev) => ({ ...prev, date: event.target.value }))}
+                className="rounded-lg border-[#E0E0E0]"
+              />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-[#333333]">Start time</label>
-              <Input type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} className="rounded-lg border-[#E0E0E0]" />
+              <Input
+                type="time"
+                value={form.startTime}
+                onChange={(event) => setForm((prev) => ({ ...prev, startTime: event.target.value }))}
+                className="rounded-lg border-[#E0E0E0]"
+              />
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-[#333333]">End time</label>
-              <Input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className="rounded-lg border-[#E0E0E0]" />
+              <Input
+                type="time"
+                value={form.endTime}
+                onChange={(event) => setForm((prev) => ({ ...prev, endTime: event.target.value }))}
+                className="rounded-lg border-[#E0E0E0]"
+              />
             </div>
             <div className="space-y-2 sm:col-span-2">
               <label className="text-sm font-medium text-[#333333]">Remark</label>
               <Textarea
-                value={remark}
-                onChange={(event) => setRemark(event.target.value)}
+                value={form.remark}
+                onChange={(event) => setForm((prev) => ({ ...prev, remark: event.target.value }))}
                 className="rounded-lg border-[#E0E0E0]"
                 placeholder="Optional notes"
               />
             </div>
           </div>
-          {error && <p className="text-sm text-red-500">{error}</p>}
+          {form.error && <p className="text-sm text-red-500">{form.error}</p>}
         </div>
         <div className="mt-6 flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose} className="px-4 py-2 text-sm text-[#555555]">

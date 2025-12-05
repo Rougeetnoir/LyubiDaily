@@ -189,7 +189,6 @@ function App() {
 
   const persistRecord = async (record: RecordItem) => {
     const derived = deriveRecordFields(record)
-    const dateKey = getRecordDateKey(derived)
     setRecords((prev) => [...prev.filter((r) => r.id !== derived.id), derived])
 
     try {
@@ -290,7 +289,7 @@ function App() {
       setIsInitialized(true)
     }
     bootstrap()
-  }, [isInitialized, selectedDate])
+  }, [isInitialized, selectedDate, showSyncMessage])
 
   useEffect(() => {
     if (!isInitialized) return
@@ -315,7 +314,7 @@ function App() {
       }
     }
     syncRecordsForDate()
-  }, [isInitialized, selectedDate])
+  }, [isInitialized, selectedDate, showSyncMessage])
 
   const selectedDateTotalSeconds = useMemo(() => {
     const base = recordsForSelectedDate.reduce((sum, r) => sum + r.duration, 0)
