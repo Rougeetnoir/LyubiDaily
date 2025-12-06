@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnalogClock } from '@/components/AnalogClock'
 import { EditEntryModal } from '@/components/EditEntryModal'
 import { ManualEntryModal } from '@/components/ManualEntryModal'
@@ -49,13 +49,15 @@ import {
 } from './timeUtils'
 
 type TabKey = 'summary' | 'timeline'
-
 type ManualEntryPayload = {
   activityId: string
   start: number
   end: number
   remark?: string
 }
+
+// ⚠️ 新增：按日期分组的记录结构
+type RecordsByDate = Record<string, RecordItem[]>
 
 const COLOR_PRESETS = [
   '#FDCEDF',
@@ -130,25 +132,42 @@ const deriveRecordFields = (record: RecordItem): RecordItem => {
 
 const ensureRecordsDerived = (list: RecordItem[]) => list.map(deriveRecordFields)
 
-const getRecordDateKey = (record: RecordItem) => record.date ?? (record.start ? formatDateKey(record.start) : '')
+const getRecordDateKey = (record: RecordItem) =>
+  record.date ?? (record.start ? formatDateKey(record.start) : '')
 
-const replaceRecordsForDate = (allRecords: RecordItem[], dateKey: string, dateRecords: RecordItem[]) => {
-  const derived = ensureRecordsDerived(dateRecords)
-  const others = allRecords.filter((record) => getRecordDateKey(record) !== dateKey)
-  return [...others, ...derived]
+// ⚠️ 新增：把扁平数组变成按日期分组的 map
+const buildRecordsByDate = (all: RecordItem[]): RecordsByDate => {
+  const derived = ensureRecordsDerived(all)
+  const map: RecordsByDate = {}
+  for (const r of derived) {
+    const key = getRecordDateKey(r)
+    if (!key) continue
+    if (!map[key]) map[key] = []
+    map[key].push(r)
+  }
+  return map
+}
+
+// ⚠️ 新增：把 map 展开成扁平数组，用于 saveRecords
+const flattenRecords = (recordsByDate: RecordsByDate): RecordItem[] => {
+  const all: RecordItem[] = []
+  for (const key of Object.keys(recordsByDate)) {
+    all.push(...ensureRecordsDerived(recordsByDate[key] ?? []))
+  }
+  return all
 }
 
 const useSyncBanner = () => {
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const syncMessageTimer = useRef<number | null>(null)
 
-  const showSyncMessage = (message = 'Cloud sync failed, using local data.') => {
+  const showSyncMessage = useCallback((message = 'Cloud sync failed, using local data.') => {
     if (syncMessageTimer.current) {
       window.clearTimeout(syncMessageTimer.current)
     }
     setSyncMessage(message)
     syncMessageTimer.current = window.setTimeout(() => setSyncMessage(null), 4000)
-  }
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -163,7 +182,10 @@ const useSyncBanner = () => {
 
 function App() {
   const [activities, setActivities] = useState<Activity[]>(() => loadActivities())
-  const [records, setRecords] = useState<RecordItem[]>(() => ensureRecordsDerived(loadRecords()))
+  // ⚠️ 核心：用 RecordsByDate 管理记录
+  const [recordsByDate, setRecordsByDate] = useState<RecordsByDate>(() =>
+    buildRecordsByDate(loadRecords()),
+  )
   const [runningRecord, setRunningRecord] = useState<RunningRecord | null>(() => loadRunningRecord())
   const [activeTab, setActiveTab] = useState<TabKey>('summary')
   const [selectedActivityId, setSelectedActivityId] = useState<string>('')
@@ -187,38 +209,19 @@ function App() {
   const lastSyncedDateRef = useRef<string | null>(null)
   const [openRecordMenuId, setOpenRecordMenuId] = useState<string | null>(null)
 
-  const persistRecord = async (record: RecordItem) => {
-    const derived = deriveRecordFields(record)
-    setRecords((prev) => [...prev.filter((r) => r.id !== derived.id), derived])
-
-    try {
-      const remote = await insertRecord(derived)
-      const normalized = deriveRecordFields(remote)
-      const normalizedDateKey = getRecordDateKey(normalized)
-      setRecords((prev) => {
-        const withoutTemp = prev.filter((r) => r.id !== derived.id)
-        const merged = replaceRecordsForDate(withoutTemp, normalizedDateKey, [normalized])
-        saveRecords(merged)
-        return merged
-      })
-    } catch (error) {
-      console.error('Failed to sync record to Supabase', error)
-      showSyncMessage()
-      setRecords((prev) => {
-        saveRecords(prev)
-        return prev
-      })
-    }
-  }
   const selectedDateKey = useMemo(() => formatDateKey(selectedDate), [selectedDate])
+
+  // ⚠️ 方便读写当前日期的 records
   const recordsForSelectedDate = useMemo(
-    () => filterRecordsByDate(records, selectedDate),
-    [records, selectedDate],
+    () => ensureRecordsDerived(recordsByDate[selectedDateKey] ?? []),
+    [recordsByDate, selectedDateKey],
   )
 
   const runningMatchesSelectedDate = useMemo(() => {
     if (!runningRecord) return false
-    return runningRecord.dateKey ? runningRecord.dateKey === selectedDateKey : isSameDay(runningRecord.start, selectedDate)
+    return runningRecord.dateKey
+      ? runningRecord.dateKey === selectedDateKey
+      : isSameDay(runningRecord.start, selectedDate)
   }, [runningRecord, selectedDate, selectedDateKey])
 
   const runningDurationSeconds = useMemo(() => {
@@ -247,6 +250,7 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [isDatePickerOpen])
 
+  // ⚠️ 初始化：同步活动 + 当前日期的记录
   useEffect(() => {
     if (isInitialized) return
     const bootstrap = async () => {
@@ -270,46 +274,73 @@ function App() {
       setActivities(nextActivities)
       setSelectedActivityId((prev) => (nextActivities.some((a) => a.id === prev) ? prev : ''))
 
-      const localRecords = ensureRecordsDerived(loadRecords())
-      let nextRecords = localRecords
+      // 本地已有的所有记录
+      const localAll = ensureRecordsDerived(loadRecords())
+      let map = buildRecordsByDate(localAll)
+
       const initialDateKey = formatDateKey(selectedDate)
       try {
         const remoteRecords = await fetchRecordsByDate(initialDateKey)
         const derivedRemote = ensureRecordsDerived(remoteRecords)
-        nextRecords = replaceRecordsForDate(localRecords, initialDateKey, derivedRemote)
-        saveRecords(nextRecords)
+        map = {
+          ...map,
+          [initialDateKey]: derivedRemote,
+        }
+        saveRecords(flattenRecords(map))
       } catch (error) {
-        console.error('Failed to load records from Supabase, using local fallback for selected date', error)
+        console.error(
+          'Failed to load records from Supabase, using local fallback for selected date',
+          error,
+        )
         showSyncMessage()
-        const fallbackForDate = ensureRecordsDerived(filterRecordsByDate(localRecords, selectedDate))
-        nextRecords = replaceRecordsForDate(localRecords, initialDateKey, fallbackForDate)
+        // 本地按日期过滤的 fallback
+        const localForDate = ensureRecordsDerived(filterRecordsByDate(localAll, selectedDate))
+        map = {
+          ...map,
+          [initialDateKey]: localForDate,
+        }
       }
-      setRecords(nextRecords)
+
+      setRecordsByDate(map)
       lastSyncedDateRef.current = initialDateKey
       setIsInitialized(true)
     }
     bootstrap()
   }, [isInitialized, selectedDate, showSyncMessage])
 
+  // ⚠️ 切换日期时，仅同步该日期的 records
   useEffect(() => {
     if (!isInitialized) return
     const dateKey = formatDateKey(selectedDate)
     if (lastSyncedDateRef.current === dateKey) return
+
     const syncRecordsForDate = async () => {
       try {
         const remote = await fetchRecordsByDate(dateKey)
         const derivedRemote = ensureRecordsDerived(remote)
-        setRecords((prev) => {
-          const merged = replaceRecordsForDate(prev, dateKey, derivedRemote)
-          saveRecords(merged)
-          return merged
+        setRecordsByDate((prev) => {
+          const next: RecordsByDate = {
+            ...prev,
+            [dateKey]: derivedRemote,
+          }
+          saveRecords(flattenRecords(next))
+          return next
         })
         lastSyncedDateRef.current = dateKey
       } catch (error) {
         console.error('Failed to load records for date from Supabase, using local fallback', error)
         showSyncMessage()
-        const fallback = ensureRecordsDerived(filterRecordsByDate(loadRecords(), selectedDate))
-        setRecords((prev) => replaceRecordsForDate(prev, dateKey, fallback))
+        // 本地 fallback：从 localStorage 再读一遍
+        const localAll = ensureRecordsDerived(loadRecords())
+        const fallback = ensureRecordsDerived(filterRecordsByDate(localAll, selectedDate))
+        setRecordsByDate((prev) => {
+          const next: RecordsByDate = {
+            ...prev,
+            [dateKey]: fallback,
+          }
+          // 不强制覆盖全量存储，避免抹掉其它日期的本地缓存
+          return next
+        })
         lastSyncedDateRef.current = dateKey
       }
     }
@@ -331,7 +362,10 @@ function App() {
     [selectedDate],
   )
 
-  const isFutureSelectedDate = useMemo(() => startOfDay(selectedDate).getTime() > startOfDay(new Date()).getTime(), [selectedDate])
+  const isFutureSelectedDate = useMemo(
+    () => startOfDay(selectedDate).getTime() > startOfDay(new Date()).getTime(),
+    [selectedDate],
+  )
 
   const resetActivityForm = () => {
     setNewActivityName('')
@@ -340,10 +374,56 @@ function App() {
     setIsEmojiPickerOpen(false)
   }
 
+  // ⚠️ 工具函数：更新某个 dateKey 下的记录，并持久化
+  const updateRecordsForDate = useCallback(
+    (dateKey: string, updater: (prev: RecordItem[]) => RecordItem[]) => {
+      setRecordsByDate((prev) => {
+        const prevForDate = ensureRecordsDerived(prev[dateKey] ?? [])
+        const nextForDate = ensureRecordsDerived(updater(prevForDate))
+        const next: RecordsByDate = {
+          ...prev,
+          [dateKey]: nextForDate,
+        }
+        saveRecords(flattenRecords(next))
+        return next
+      })
+    },
+    [],
+  )
+
+  const persistRecord = async (record: RecordItem) => {
+    const derived = deriveRecordFields(record)
+    const localDateKey = getRecordDateKey(derived)
+
+    if (!localDateKey) return
+
+    // 本地先乐观更新
+    updateRecordsForDate(localDateKey, (prev) => [
+      ...prev.filter((r) => r.id !== derived.id),
+      derived,
+    ])
+
+    try {
+      const remote = await insertRecord(derived)
+      const normalized = deriveRecordFields(remote)
+      const normalizedDateKey = getRecordDateKey(normalized) || localDateKey
+
+      // 用远端返回的数据再覆盖一次对应日期
+      updateRecordsForDate(normalizedDateKey, (prev) => [
+        ...prev.filter((r) => r.id !== normalized.id),
+        normalized,
+      ])
+    } catch (error) {
+      console.error('Failed to sync record to Supabase', error)
+      showSyncMessage()
+      // 出错就保持当前本地状态，不再回滚（避免复杂度过高）
+    }
+  }
+
   const handleSaveManualEntry = async ({ activityId, start, end, remark }: ManualEntryPayload) => {
     const now = Date.now()
     const duration = Math.max(1, Math.floor((end - start) / 1000))
-    const record = {
+    const record: RecordItem = {
       id: crypto.randomUUID(),
       activityId,
       start,
@@ -360,9 +440,16 @@ function App() {
     setIsManualEntryOpen(false)
   }
 
-  const handleUpdateEntry = async ({ id, activityId, start, end, remark }: { id: string } & ManualEntryPayload) => {
+  const handleUpdateEntry = async ({
+    id,
+    activityId,
+    start,
+    end,
+    remark,
+  }: { id: string } & ManualEntryPayload) => {
     const now = Date.now()
-    const existing = records.find((r) => r.id === id)
+    // 这里只在当前日期内找原始 entry 即可
+    const existing = recordsForSelectedDate.find((r) => r.id === id)
     const updated = deriveRecordFields({
       ...existing,
       id,
@@ -377,27 +464,61 @@ function App() {
       startTime: formatClock(start),
       endTime: formatClock(end),
     })
+
+    const oldDateKey = existing ? getRecordDateKey(existing) : selectedDateKey
     const newDateKey = getRecordDateKey(updated)
 
-    setRecords((prev) => replaceRecordsForDate(prev.filter((r) => r.id !== id), newDateKey, [updated]))
+    if (!newDateKey) return
+
+    // 本地先更新（注意可能跨日期移动）
+    setRecordsByDate((prev) => {
+      const copy: RecordsByDate = { ...prev }
+
+      if (oldDateKey && copy[oldDateKey]) {
+        copy[oldDateKey] = ensureRecordsDerived(
+          copy[oldDateKey].filter((r) => r.id !== id),
+        )
+      }
+      const prevNew = ensureRecordsDerived(copy[newDateKey] ?? [])
+      copy[newDateKey] = ensureRecordsDerived([
+        ...prevNew.filter((r) => r.id !== id),
+        updated,
+      ])
+
+      saveRecords(flattenRecords(copy))
+      return copy
+    })
 
     try {
       const remote = await updateRecord(updated)
       const normalized = deriveRecordFields(remote)
-      setRecords((prev) => {
-        const withoutOld = prev.filter((r) => r.id !== id)
-        const merged = replaceRecordsForDate(withoutOld, getRecordDateKey(normalized), [normalized])
-        saveRecords(merged)
-        return merged
+      const normalizedKey = getRecordDateKey(normalized) || newDateKey
+
+      setRecordsByDate((prev) => {
+        const copy: RecordsByDate = { ...prev }
+
+        // 从所有日期里删掉旧的
+        for (const key of Object.keys(copy)) {
+          copy[key] = ensureRecordsDerived(
+            copy[key].filter((r) => r.id !== normalized.id),
+          )
+        }
+
+        const prevArr = ensureRecordsDerived(copy[normalizedKey] ?? [])
+        copy[normalizedKey] = ensureRecordsDerived([
+          ...prevArr.filter((r) => r.id !== normalized.id),
+          normalized,
+        ])
+
+        saveRecords(flattenRecords(copy))
+        return copy
       })
     } catch (error) {
       console.error('Failed to update record in Supabase', error)
-        showSyncMessage()
-      setRecords((prev) => {
-        saveRecords(prev)
-        return prev
-      })
+      showSyncMessage()
+      // 出错不回滚，交给用户手动调整即可
     }
+
     setIsEditEntryOpen(false)
     setEditingEntry(null)
   }
@@ -410,21 +531,24 @@ function App() {
   const handleDeleteEntry = async (entry: RecordItem) => {
     const confirmed = window.confirm('Delete this entry?\nThis action cannot be undone.')
     if (!confirmed) return
-    const dateKey = getRecordDateKey(entry)
+
     setOpenRecordMenuId(null)
     setIsEditEntryOpen(false)
     setEditingEntry(null)
 
-    setRecords((prev) => replaceRecordsForDate(prev.filter((r) => r.id !== entry.id), dateKey, []))
+    const dateKey = getRecordDateKey(entry)
+    if (!dateKey) return
+
+    // 本地先删
+    updateRecordsForDate(dateKey, (prev) => prev.filter((r) => r.id !== entry.id))
+
     try {
       await deleteRecord(entry.id)
-      setRecords((prev) => {
-        saveRecords(prev)
-        return prev
-      })
+      // 成功就不再额外处理，本地已经是删掉状态
     } catch (error) {
       console.error('Failed to delete record from Supabase', error)
-      showSyncMessage()
+      showSyncMessage('删除已在本地生效，但同步到云端失败。')
+      // 为避免状态过于跳变，这里不做自动回滚
     }
   }
 
@@ -449,7 +573,9 @@ function App() {
   }
 
   const handleActivityDraftChange = (id: string, changes: Partial<Activity>) => {
-    setActivityDrafts((prev) => prev.map((draft) => (draft.id === id ? { ...draft, ...changes } : draft)))
+    setActivityDrafts((prev) =>
+      prev.map((draft) => (draft.id === id ? { ...draft, ...changes } : draft)),
+    )
   }
 
   const handleSelectDraftColor = (id: string, color: string) => {
@@ -461,16 +587,26 @@ function App() {
   }
 
   const handleDeleteActivityDraft = async (id: string) => {
-    const confirmed = window.confirm('Delete this activity?\nThis will remove the activity and may also remove any associated records.')
+    const confirmed = window.confirm(
+      'Delete this activity?\nThis will remove the activity and may also remove any associated records.',
+    )
     if (!confirmed) return
 
     setActivityDrafts((prev) => prev.filter((draft) => draft.id !== id))
     setActivities((prev) => prev.filter((activity) => activity.id !== id))
-    setRecords((prev) => {
-      const next = prev.filter((record) => record.activityId !== id)
-      saveRecords(next)
-      return next
+
+    // 删除该 activity 对应的所有记录（所有日期）
+    setRecordsByDate((prev) => {
+      const copy: RecordsByDate = {}
+      for (const key of Object.keys(prev)) {
+        copy[key] = ensureRecordsDerived(
+          prev[key].filter((record) => record.activityId !== id),
+        )
+      }
+      saveRecords(flattenRecords(copy))
+      return copy
     })
+
     if (selectedActivityId === id) {
       setSelectedActivityId('')
     }
@@ -511,7 +647,9 @@ function App() {
       console.error('Failed to sync activities to Supabase', error)
       showSyncMessage('活动已保存到本地，但同步到 Supabase 失败。')
     }
-    setSelectedActivityId((prev) => (normalizedDrafts.some((activity) => activity.id === prev) ? prev : ''))
+    setSelectedActivityId((prev) =>
+      normalizedDrafts.some((activity) => activity.id === prev) ? prev : '',
+    )
     handleCloseActivityManager()
   }
 
@@ -554,7 +692,12 @@ function App() {
 
     const currentInstant = new Date()
     const startDateTime = new Date(selectedDate)
-    startDateTime.setHours(currentInstant.getHours(), currentInstant.getMinutes(), currentInstant.getSeconds(), currentInstant.getMilliseconds())
+    startDateTime.setHours(
+      currentInstant.getHours(),
+      currentInstant.getMinutes(),
+      currentInstant.getSeconds(),
+      currentInstant.getMilliseconds(),
+    )
     const alignedStart = startDateTime.getTime()
     const id = crypto.randomUUID()
     const newRunning: RunningRecord = {
@@ -575,7 +718,10 @@ function App() {
     if (!runningRecord) return
 
     const now = Date.now()
-    const elapsedSeconds = Math.max(1, Math.floor((now - (runningRecord.realStart ?? runningRecord.start)) / 1000))
+    const elapsedSeconds = Math.max(
+      1,
+      Math.floor((now - (runningRecord.realStart ?? runningRecord.start)) / 1000),
+    )
     const end = runningRecord.start + elapsedSeconds * 1000
     const finished: RecordItem = {
       id: runningRecord.id,
@@ -595,9 +741,10 @@ function App() {
     saveRunningRecord(null)
   }
 
-  const chronologicalRecords = useMemo(() => {
-    return [...recordsForSelectedDate].sort((a, b) => a.start - b.start)
-  }, [recordsForSelectedDate])
+  const chronologicalRecords = useMemo(
+    () => [...recordsForSelectedDate].sort((a, b) => a.start - b.start),
+    [recordsForSelectedDate],
+  )
 
   const isRunning = Boolean(runningRecord)
   const startButtonDisabled = isRunning ? false : !selectedActivityId || isFutureSelectedDate
@@ -605,7 +752,7 @@ function App() {
     'h-10 rounded-lg px-4 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
     isRunning
       ? 'border border-[#FFDBD2] bg-[#FFECE8] text-[#D64545] hover:bg-[#FFE0D8] active:bg-[#FFD6CF]'
-      : 'border border-[#D0D0D0] bg-[#F0F0F0] text-[#333333] hover:bg-[#E8E8E8] active:bg-[#DDDDDD]'
+      : 'border border-[#D0D0D0] bg-[#F0F0F0] text-[#333333] hover:bg-[#E8E8E8] active:bg-[#DDDDDD]',
   )
   const startButtonTitle = !isRunning && isFutureSelectedDate ? 'Cannot start timer for a future date.' : undefined
 
@@ -665,7 +812,9 @@ function App() {
               onClick={() => setIsDatePickerOpen((prev) => !prev)}
               className="text-left text-base font-medium text-[#1F1F1F] hover:text-[#555555]"
             >
-              {isSameDay(selectedDate, new Date()) ? `Today · ${selectedDateLabel}` : selectedDateLabel}
+              {isSameDay(selectedDate, new Date())
+                ? `Today · ${selectedDateLabel}`
+                : selectedDateLabel}
             </button>
             <p className="text-sm">Total {formatDuration(selectedDateTotalSeconds)}</p>
             {isDatePickerOpen && (
@@ -723,7 +872,9 @@ function App() {
                 disabled={activities.length === 0}
               >
                 <SelectTrigger className="h-10 w-full rounded-lg border border-[#E0E0E0] bg-white text-sm text-[#333333] shadow-none focus:border-[#C5C5C5] focus:ring-0 focus:ring-offset-0 [&[data-placeholder]]:text-[#A0A0A0]">
-                  <SelectValue placeholder={activities.length ? 'Select activity' : 'Add an activity first'} />
+                  <SelectValue
+                    placeholder={activities.length ? 'Select activity' : 'Add an activity first'}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {activities.map((a) => (
@@ -739,7 +890,9 @@ function App() {
               <Input
                 placeholder="Remark (optional)"
                 value={remark}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => setRemark(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setRemark(event.target.value)
+                }
                 className="h-10 w-full rounded-lg border border-[#E0E0E0] px-3 text-sm text-[#333333] placeholder:text-[#A0A0A0] focus:border-[#C5C5C5] focus:ring-0"
               />
             </div>
@@ -755,7 +908,9 @@ function App() {
                   {isRunning ? 'Stop' : 'Start'}
                 </Button>
                 {isRunning && (
-                  <span className="text-sm text-[#555555] sm:ml-3">{formatDurationHMS(runningDurationSeconds)}</span>
+                  <span className="text-sm text-[#555555] sm:ml-3">
+                    {formatDurationHMS(runningDurationSeconds)}
+                  </span>
                 )}
               </div>
               <AnalogClock className="sm:ml-6" />
@@ -775,13 +930,11 @@ function App() {
             <CardHeader className="flex flex-row items-start justify-between space-y-0">
               <div>
                 <CardTitle>New activity</CardTitle>
-                <CardDescription>Create an activity shortcut with an optional icon and color.</CardDescription>
+                <CardDescription>
+                  Create an activity shortcut with an optional icon and color.
+                </CardDescription>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={closeActivityForm}
-              >
+              <Button variant="ghost" size="sm" onClick={closeActivityForm}>
                 Close
               </Button>
             </CardHeader>
@@ -793,7 +946,9 @@ function App() {
                     id="activity-name"
                     placeholder="写作、项目 A"
                     value={newActivityName}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) => setNewActivityName(event.target.value)}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                      setNewActivityName(event.target.value)
+                    }
                   />
                 </div>
                 <div className="space-y-2">
@@ -802,7 +957,9 @@ function App() {
                     id="activity-color"
                     placeholder="#2563eb"
                     value={newActivityColor}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) => setNewActivityColor(event.target.value)}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                      setNewActivityColor(event.target.value)
+                    }
                   />
                   <div className="flex flex-wrap gap-2">
                     {COLOR_PRESETS.map((color) => (
@@ -812,7 +969,8 @@ function App() {
                         className={cn(
                           'h-8 w-8 rounded-full border border-border transition hover:scale-[1.05]',
                           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                          newActivityColor?.toLowerCase() === color.toLowerCase() && 'ring-2 ring-ring border-ring',
+                          newActivityColor?.toLowerCase() === color.toLowerCase() &&
+                            'ring-2 ring-ring border-ring',
                         )}
                         style={{ backgroundColor: color }}
                         onClick={() => setNewActivityColor(color)}
@@ -830,10 +988,16 @@ function App() {
                     id="activity-icon"
                     placeholder="😊"
                     value={newActivityIcon}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) => setNewActivityIcon(event.target.value)}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                      setNewActivityIcon(event.target.value)
+                    }
                     className="max-w-[120px]"
                   />
-                  <Button variant="outline" size="icon" onClick={() => setIsEmojiPickerOpen((v) => !v)}>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setIsEmojiPickerOpen((v) => !v)}
+                  >
                     😊
                   </Button>
                   {isEmojiPickerOpen && (
@@ -859,10 +1023,7 @@ function App() {
               </div>
               <div className="flex flex-wrap gap-3">
                 <Button onClick={handleCreateActivity}>Save</Button>
-                <Button
-                  variant="outline"
-                  onClick={closeActivityForm}
-                >
+                <Button variant="outline" onClick={closeActivityForm}>
                   Cancel
                 </Button>
               </div>
@@ -875,7 +1036,9 @@ function App() {
             <CardHeader className="flex flex-row items-start justify-between space-y-0">
               <div>
                 <CardTitle>Manage activities</CardTitle>
-                <CardDescription>Inline edit names, emoji and colors for all activities.</CardDescription>
+                <CardDescription>
+                  Inline edit names, emoji and colors for all activities.
+                </CardDescription>
               </div>
               <div className="flex gap-2">
                 <Button variant="ghost" size="sm" onClick={handleCloseActivityManager}>
@@ -921,7 +1084,9 @@ function App() {
                           <Input
                             value={activity.icon ?? ''}
                             onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                              handleActivityDraftChange(activity.id, { icon: event.target.value || undefined })
+                              handleActivityDraftChange(activity.id, {
+                                icon: event.target.value || undefined,
+                              })
                             }
                             placeholder="😊"
                             className="sm:max-w-[120px]"
@@ -966,7 +1131,8 @@ function App() {
                                 type="button"
                                 className={cn(
                                   'h-7 w-7 rounded-full border border-border transition hover:scale-[1.05]',
-                                  previewColor?.toLowerCase() === color.toLowerCase() && 'ring-2 ring-ring border-ring',
+                                  previewColor?.toLowerCase() === color.toLowerCase() &&
+                                    'ring-2 ring-ring border-ring',
                                 )}
                                 style={{ backgroundColor: color }}
                                 onClick={() => handleSelectDraftColor(activity.id, color)}
@@ -1035,17 +1201,26 @@ function App() {
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-center gap-2 text-base font-semibold text-[#333333]">
-                            {activity?.icon && <span className="text-lg" aria-hidden>{activity.icon}</span>}
+                            {activity?.icon && (
+                              <span className="text-lg" aria-hidden>
+                                {activity.icon}
+                              </span>
+                            )}
                             <span>{activity ? activity.name : '已删除活动'}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium text-[#555555]">
-                              {formatClock(record.start)}–{formatClock(record.end)} ({formatDuration(record.duration)})
+                              {formatClock(record.start)}–{formatClock(record.end)} (
+                              {formatDuration(record.duration)})
                             </span>
                             <div className="relative">
                               <button
                                 type="button"
-                                onClick={() => setOpenRecordMenuId((prev) => (prev === record.id ? null : record.id))}
+                                onClick={() =>
+                                  setOpenRecordMenuId((prev) =>
+                                    prev === record.id ? null : record.id,
+                                  )
+                                }
                                 aria-label="更多操作"
                                 className="rounded-full p-1 text-lg text-[#888888] transition hover:bg-[#F0F0F0]"
                               >
@@ -1095,16 +1270,22 @@ function App() {
                   <TimeBarView entries={recordsForSelectedDate} activities={activities} />
                 </div>
                 {recordsForSelectedDate.length === 0 ? (
-                  <p className="text-muted-foreground">No records for this date yet. Start an activity to begin tracking time.</p>
+                  <p className="text-muted-foreground">
+                    No records for this date yet. Start an activity to begin tracking time.
+                  </p>
                 ) : (
                   <ul className="space-y-2 text-xs text-muted-foreground">
                     {recordsForSelectedDate.map((r) => {
                       const activity = activities.find((a) => a.id === r.activityId)
                       return (
-                        <li key={r.id} className="flex flex-col gap-1 border-b border-dashed border-border pb-2 last:border-b-0">
+                        <li
+                          key={r.id}
+                          className="flex flex-col gap-1 border-b border-dashed border-border pb-2 last:border-b-0"
+                        >
                           <div className="flex items-start justify-between gap-3">
                             <span>
-                              {formatClock(r.start)}–{formatClock(r.end)} {activity ? activity.name : '已删除活动'}
+                              {formatClock(r.start)}–{formatClock(r.end)}{' '}
+                              {activity ? activity.name : '已删除活动'}
                               {r.remark ? ` · 备注：${r.remark}` : ''}
                             </span>
                             <div className="flex items-center gap-2">
@@ -1112,7 +1293,11 @@ function App() {
                               <div className="relative">
                                 <button
                                   type="button"
-                                  onClick={() => setOpenRecordMenuId((prev) => (prev === r.id ? null : r.id))}
+                                  onClick={() =>
+                                    setOpenRecordMenuId((prev) =>
+                                      prev === r.id ? null : r.id,
+                                    )
+                                  }
                                   aria-label="更多操作"
                                   className="rounded-full p-1 text-lg text-[#888888] transition hover:bg-[#F0F0F0]"
                                 >

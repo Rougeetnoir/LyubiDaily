@@ -147,10 +147,7 @@ export function saveActivities(list: Activity[]) {
 }
 
 export async function fetchActivitiesFromSupabase(): Promise<Activity[]> {
-  const { data, error } = await supabase
-    .from<ActivityRow>(ACTIVITIES_TABLE)
-    .select('*')
-    .order('created_at', { ascending: true })
+  const { data, error } = await supabase.from(ACTIVITIES_TABLE).select('*').order('created_at', { ascending: true }).returns<ActivityRow[]>()
 
   if (error) {
     console.error('Failed to fetch activities from Supabase', error)
@@ -164,20 +161,22 @@ export async function upsertActivitiesToSupabase(list: Activity[]): Promise<Acti
   if (list.length === 0) return []
   const payload = list.map(mapActivityToRow)
   const { data, error } = await supabase
-    .from<ActivityRow>(ACTIVITIES_TABLE)
+    .from(ACTIVITIES_TABLE)
     .upsert(payload, { onConflict: 'id' })
     .select()
+    .returns<ActivityRow[]>()
 
   if (error) {
     console.error('Failed to upsert activities to Supabase', error)
     throw error
   }
-  return (data ?? []).map(mapRowToActivity)
+  const rows = data && data.length > 0 ? data : payload
+  return rows.map(mapRowToActivity)
 }
 
 export async function deleteActivity(id: string): Promise<void> {
   try {
-    const { error } = await supabase.from<ActivityRow>(ACTIVITIES_TABLE).delete().eq('id', id)
+    const { error } = await supabase.from(ACTIVITIES_TABLE).delete().eq('id', id)
     if (error) throw error
   } catch (error) {
     console.error(`Failed to delete activity ${id} from Supabase`, error)
@@ -205,11 +204,7 @@ export function saveRunningRecord(record: RunningRecord | null) {
 }
 
 export async function fetchRecordsByDate(date: string): Promise<RecordItem[]> {
-  const { data, error } = await supabase
-    .from<RecordRow>(RECORDS_TABLE)
-    .select('*')
-    .eq('date', date)
-    .order('start_time', { ascending: true })
+  const { data, error } = await supabase.from(RECORDS_TABLE).select('*').eq('date', date).order('start_time', { ascending: true }).returns<RecordRow[]>()
 
   if (error) {
     console.error('Failed to fetch records from Supabase', error)
@@ -221,7 +216,7 @@ export async function fetchRecordsByDate(date: string): Promise<RecordItem[]> {
 
 export async function insertRecord(item: RecordItem): Promise<RecordItem> {
   const payload = mapRecordToRow(item)
-  const { data, error } = await supabase.from<RecordRow>(RECORDS_TABLE).insert(payload).select().maybeSingle()
+  const { data, error } = await supabase.from(RECORDS_TABLE).insert(payload).select().returns<RecordRow[]>().maybeSingle()
   if (error) {
     console.error('Failed to insert record into Supabase', error)
     throw error
@@ -234,10 +229,11 @@ export async function updateRecord(item: RecordItem): Promise<RecordItem> {
   const nextUpdatedAt = Date.now()
   const payload = mapRecordToRow({ ...item, updatedAt: nextUpdatedAt })
   const { data, error } = await supabase
-    .from<RecordRow>(RECORDS_TABLE)
+    .from(RECORDS_TABLE)
     .update(payload)
     .eq('id', item.id)
     .select()
+    .returns<RecordRow[]>()
     .maybeSingle()
   if (error) {
     console.error('Failed to update record in Supabase', error)
@@ -249,7 +245,7 @@ export async function updateRecord(item: RecordItem): Promise<RecordItem> {
 
 export async function deleteRecord(id: string): Promise<void> {
   try {
-    const { error } = await supabase.from<RecordRow>(RECORDS_TABLE).delete().eq('id', id)
+    const { error } = await supabase.from(RECORDS_TABLE).delete().eq('id', id)
     if (error) throw error
   } catch (error) {
     console.error(`Failed to delete record ${id} from Supabase`, error)
